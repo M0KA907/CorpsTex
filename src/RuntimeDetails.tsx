@@ -33,8 +33,8 @@ export function RuntimeFields({item}:{item:Record<string,unknown>}) {
 
 export function RuntimeItemDetails({item}:{item:Record<string,unknown>}) {
   const [expanded,setExpanded]=useState(false);
-  return <details className="runtime-details" onToggle={event=>setExpanded(event.currentTarget.open)}>
-    <summary>Inspect {typeof item.type==='string'?item.type:'runtime item'}</summary>
+  return <details className="runtime-details" data-status={typeof item.status==='string'?item.status:undefined} onToggle={event=>setExpanded(event.currentTarget.open)}>
+    <summary><span>Inspect {typeof item.type==='string'?item.type:'runtime item'}</span>{typeof item.status==='string'&&<small className="runtime-item-status">{item.status}</small>}</summary>
     {expanded&&<RuntimeFields item={item}/>}
   </details>;
 }

@@ -1,6 +1,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod browser;
+mod editor;
+mod editor_install;
+mod editor_lsp;
 mod media;
 mod opencode_credentials;
 mod projects;
@@ -14,6 +17,160 @@ use tauri::Manager;
 struct ExitState {
     started: AtomicBool,
     ready: AtomicBool,
+}
+
+#[tauri::command]
+fn editor_install_plan(
+    app: tauri::AppHandle,
+    id: String,
+    remove: Option<bool>,
+) -> editor::Result<editor_install::Plan> {
+    let base = app
+        .path()
+        .app_local_data_dir()
+        .map_err(|_| editor::error("installer", "Application data path unavailable."))?;
+    if remove.unwrap_or(false) {
+        editor_install::removal_plan(&base, &id)
+    } else {
+        editor_install::plan(&base, &id)
+    }
+}
+#[tauri::command]
+async fn editor_install(
+    app: tauri::AppHandle,
+    id: String,
+    approved: bool,
+    remove: bool,
+) -> editor::Result<serde_json::Value> {
+    let base = app
+        .path()
+        .app_local_data_dir()
+        .map_err(|_| editor::error("installer", "Application data path unavailable."))?;
+    tauri::async_runtime::spawn_blocking(move || {
+        if remove {
+            editor_install::remove(&base, &id, approved)?;
+            Ok(serde_json::Value::Null)
+        } else {
+            serde_json::to_value(editor_install::install(&base, &id, approved)?)
+                .map_err(|_| editor::error("installer", "Could not encode installation result."))
+        }
+    })
+    .await
+    .map_err(|_| editor::error("bridge", "Installation worker failed."))?
+}
+
+#[tauri::command]
+async fn editor_request(
+    app: tauri::AppHandle,
+    window: tauri::Window,
+    root: String,
+    action: editor::Action,
+) -> editor::Result<serde_json::Value> {
+    let label = window.label().to_owned();
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<editor::Editor>().request(&label, &root, action)
+    })
+    .await
+    .map_err(|_| editor::error("bridge", "Editor worker failed."))?
+}
+#[tauri::command]
+fn editor_dirty(
+    window: tauri::Window,
+    state: tauri::State<'_, editor::Editor>,
+    dirty: bool,
+) -> editor::Result<()> {
+    state.dirty(window.label(), dirty)
+}
+#[tauri::command]
+fn editor_exit_pending(state: tauri::State<'_, editor::Editor>) -> bool {
+    state.exit_pending.load(Ordering::SeqCst)
+}
+#[tauri::command]
+fn editor_install_busy() -> bool {
+    editor_install::busy()
+}
+#[tauri::command]
+fn editor_resolve_exit(app: tauri::AppHandle, window: tauri::Window, discard: bool) {
+    let state = app.state::<editor::Editor>();
+    state.exit_pending.store(false, Ordering::SeqCst);
+    if discard {
+        let _ = state.dirty(window.label(), false);
+        request_exit(&app);
+    }
+}
+#[tauri::command]
+fn editor_lsp_discover() -> Vec<editor_lsp::Discovery> {
+    editor_lsp::discoveries()
+}
+#[tauri::command]
+async fn editor_lsp_start(
+    app: tauri::AppHandle,
+    window: tauri::Window,
+    root: String,
+    id: String,
+    config: editor_lsp::Configuration,
+) -> editor::Result<serde_json::Value> {
+    let label = window.label().to_owned();
+    let authorized = app.state::<editor::Editor>().authorized(&label, &root)?;
+    let root = std::path::PathBuf::from(editor::root_label(&authorized));
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<editor_lsp::Servers>()
+            .start(&label, &root, &id, config)
+    })
+    .await
+    .map_err(|_| editor::error("bridge", "Language server worker failed."))?
+}
+#[tauri::command]
+async fn editor_lsp_request(
+    app: tauri::AppHandle,
+    window: tauri::Window,
+    root: String,
+    id: String,
+    method: String,
+    params: serde_json::Value,
+) -> editor::Result<serde_json::Value> {
+    let label = window.label().to_owned();
+    app.state::<editor::Editor>().authorized(&label, &root)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<editor_lsp::Servers>()
+            .request(&label, &root, &id, &method, params)
+    })
+    .await
+    .map_err(|_| editor::error("bridge", "Language server worker failed."))?
+}
+#[tauri::command]
+fn editor_lsp_notify(
+    window: tauri::Window,
+    state: tauri::State<'_, editor_lsp::Servers>,
+    root: String,
+    id: String,
+    method: String,
+    params: serde_json::Value,
+) -> editor::Result<()> {
+    state.notify(window.label(), &root, &id, &method, params)
+}
+#[tauri::command]
+fn editor_lsp_poll(
+    window: tauri::Window,
+    state: tauri::State<'_, editor_lsp::Servers>,
+    root: String,
+    id: String,
+) -> editor::Result<serde_json::Value> {
+    state.poll(window.label(), &root, &id)
+}
+#[tauri::command]
+async fn editor_lsp_stop(
+    app: tauri::AppHandle,
+    window: tauri::Window,
+    root: String,
+    id: String,
+) -> editor::Result<()> {
+    let label = window.label().to_owned();
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<editor_lsp::Servers>().stop(&label, &root, &id)
+    })
+    .await
+    .map_err(|_| editor::error("bridge", "Language server cleanup failed."))
 }
 
 #[tauri::command]
@@ -202,6 +359,14 @@ async fn confirm_exit(app: tauri::AppHandle) -> Result<(), runtime::Error> {
 }
 
 async fn finish_exit(app: tauri::AppHandle, confirmed: bool) -> Result<(), runtime::Error> {
+    if editor_install::busy() {
+        app.state::<editor::Editor>().request_exit();
+        return Err(runtime::Error::Busy);
+    }
+    if app.state::<editor::Editor>().has_dirty() {
+        app.state::<editor::Editor>().request_exit();
+        return Err(runtime::Error::ConfirmationRequired);
+    }
     if opencode_credentials::saving() {
         return Err(runtime::Error::OpenCodeKeyBusy);
     }
@@ -221,6 +386,7 @@ async fn finish_exit(app: tauri::AppHandle, confirmed: bool) -> Result<(), runti
     .and_then(|result| result);
     match result {
         Ok(()) => {
+            app.state::<editor_lsp::Servers>().stop_all();
             app.state::<ExitState>().ready.store(true, Ordering::SeqCst);
             app.exit(0);
             Ok(())
@@ -235,6 +401,10 @@ async fn finish_exit(app: tauri::AppHandle, confirmed: bool) -> Result<(), runti
 }
 
 fn request_exit(app: &tauri::AppHandle) {
+    if app.state::<editor::Editor>().has_dirty() || editor_install::busy() {
+        app.state::<editor::Editor>().request_exit();
+        return;
+    }
     // Failure leaves the application open rather than silently terminating work.
     if let Ok(false) = app.state::<runtimes::Runtimes>().request_exit() {
         let app = app.clone();
@@ -246,9 +416,24 @@ fn request_exit(app: &tauri::AppHandle) {
 
 fn main() {
     tauri::Builder::default()
+        .manage(editor::Editor::default())
+        .manage(editor_lsp::Servers::default())
         .manage(runtimes::Runtimes::default())
         .manage(ExitState::default())
         .invoke_handler(tauri::generate_handler![
+            editor_install_plan,
+            editor_install_busy,
+            editor_install,
+            editor_request,
+            editor_dirty,
+            editor_exit_pending,
+            editor_resolve_exit,
+            editor_lsp_discover,
+            editor_lsp_start,
+            editor_lsp_request,
+            editor_lsp_notify,
+            editor_lsp_poll,
+            editor_lsp_stop,
             connect_project,
             opencode_save_key,
             reconnect_opencode,
@@ -270,10 +455,20 @@ fn main() {
                 api.prevent_close();
                 request_exit(window.app_handle());
             }
-            tauri::WindowEvent::Destroyed => window
-                .app_handle()
-                .state::<runtimes::Runtimes>()
-                .detach_window(window.label()),
+            tauri::WindowEvent::Destroyed => {
+                window
+                    .app_handle()
+                    .state::<runtimes::Runtimes>()
+                    .detach_window(window.label());
+                window
+                    .app_handle()
+                    .state::<editor::Editor>()
+                    .detach(window.label());
+                window
+                    .app_handle()
+                    .state::<editor_lsp::Servers>()
+                    .stop_window(window.label());
+            }
             _ => {}
         })
         .build(tauri::generate_context!())

@@ -1,3 +1,5 @@
+import { ConversationLibrary } from './ConversationLibrary';
+import { useCallback } from 'react';
 import { ActivityBar, activityState } from './ActivityBar';
 import { ComposerInput, referencedSkills, type Skill } from './ComposerInput';
 import './composer-tools.css';
@@ -18,7 +20,7 @@ type Project = { runtime?: 'codex'|'opencode'; root: string; generation: number;
 type MediaContent = {type: string; text?: string; url?: string; path?: string; data?: string; mimeType?: string; imageUrl?: string; image_url?: string; resource?: {mimeType?:string;blob?:string}};
 type Item = { id: string; type: string; text?: string; phase?: string; summary?: string[]; summaryDelta?: Record<string, string>; contentDelta?: Record<string, string>; content?: (MediaContent | string)[]; result?: {content?: MediaContent[]} | string; savedPath?: string; failure?: {type?:string}; fileId?: string; path?: string; contentItems?: MediaContent[]; output?: MediaContent[] | string; reported?:unknown; reportedContent?:unknown; command?: string; status?: string };
 type Turn = TurnActivityData & { id: string; status: string; items: Item[]; error?: {message?: string} | null };
-export type Thread = { id: string; name?: string | null; preview?: string; turns?: Turn[]; tokenUsage?: TokenUsage; clientRevision?: number; clientArchived?:boolean; parentThreadId?:string|null; forkedFromId?:string|null; agentNickname?:string|null; agentRole?:string|null; clientRuntimeNotice?:{kind:string;message:string;willRetry:boolean} };
+export type Thread = { id: string; name?: string | null; preview?: string; updatedAt?:number|string; createdAt?:number|string; turns?: Turn[]; tokenUsage?: TokenUsage; clientRevision?: number; clientArchived?:boolean; parentThreadId?:string|null; forkedFromId?:string|null; agentNickname?:string|null; agentRole?:string|null; clientRuntimeNotice?:{kind:string;message:string;willRetry:boolean} };
 export type Model = { provider?:string; freeLabel?:boolean; model: string; displayName: string; isDefault?: boolean; supportedReasoningEfforts: {reasoningEffort: string}[] };
 export function validReasoningEffort(model: Model | undefined, effort: string): string {
   return model?.supportedReasoningEfforts.some(option => option.reasoningEffort === effort) ? effort : '';
@@ -96,12 +98,13 @@ export const ThreadTranscript = memo(function ThreadTranscript({ turns, runtime 
   })}</>;
 });
 
-export function Conversation({ runtime = 'codex', runtimeControls, onDraftState, project, controls, connect, onChooseProject, invoke, errorText, settingsOpen, onCloseSettings, preferences, onPreferences, storageError, approvals, approvalBusy, approvalInvoke, exiting, timelineProjects = [], sessionId = '', initialThread, autoOpen = 0, onOpenSession, onSessionState, showTimeline = true, visible = true }: { visible?:boolean; sessionId?:string; initialThread?:string; autoOpen?:number; onOpenSession?:(thread?:Thread)=>void; onSessionState?:(thread:Thread|null,pending:boolean)=>void; showTimeline?:boolean; runtime?: 'codex'|'opencode'; runtimeControls?:ReactNode; onDraftState?:(pending:boolean)=>void; project: Project | null; controls: ReactNode; connect: () => Promise<boolean>; onChooseProject: () => void; invoke: Invoke; errorText: (error: unknown) => string; settingsOpen:boolean; onCloseSettings:()=>void; preferences:Preferences; onPreferences:(next:Preferences)=>void; storageError:string; approvals:Approval[]; approvalBusy:Set<string>; approvalInvoke:Invoke; exiting:boolean; timelineProjects?:TimelineProject[] }) {
+export function Conversation({ sidebarToggle, runtime = 'codex', runtimeControls, onDraftState, project, controls, connect, onChooseProject, invoke, errorText, settingsOpen, onCloseSettings, preferences, onPreferences, storageError, approvals, approvalBusy, approvalInvoke, exiting, timelineProjects = [], sessionId = '', initialThread, autoOpen = 0, onOpenSession, onSessionState, showTimeline = true, visible = true, editorRoot = '' }: { sidebarToggle?:ReactNode; editorRoot?:string; visible?:boolean; sessionId?:string; initialThread?:string; autoOpen?:number; onOpenSession?:(thread?:Thread)=>void; onSessionState?:(thread:Thread|null,pending:boolean)=>void; showTimeline?:boolean; runtime?: 'codex'|'opencode'; runtimeControls?:ReactNode; onDraftState?:(pending:boolean)=>void; project: Project | null; controls: ReactNode; connect: () => Promise<boolean>; onChooseProject: () => void; invoke: Invoke; errorText: (error: unknown) => string; settingsOpen:boolean; onCloseSettings:()=>void; preferences:Preferences; onPreferences:(next:Preferences)=>void; storageError:string; approvals:Approval[]; approvalBusy:Set<string>; approvalInvoke:Invoke; exiting:boolean; timelineProjects?:TimelineProject[] }) {
   const ids = (name:string) => sessionId ? `${sessionId}-${name}` : name;
   const container = useRef<HTMLDivElement>(null);
   const runtimeName=runtime==='opencode'?'OpenCode':'Codex';
   const [configOptions,setConfigOptions]=useState<{id:string;currentValue:string;options:{value:string;name:string}[]}[]>([]);
-  const [threadSearch,setThreadSearch] = useState('');
+  const [listing,setListing] = useState(false);
+  const listRequest = useRef<symbol|null>(null);
   const [threads, setThreads] = useState<Thread[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [archivedList,setArchivedList]=useState(false);
@@ -125,7 +128,7 @@ export function Conversation({ runtime = 'codex', runtimeControls, onDraftState,
   const [attachedSkills, setAttachedSkills] = useState<Skill[]>([]);
   const [draftTurn, setDraftTurn] = useState<string | null | undefined>(undefined);
   const [delivery, setDelivery] = useState('');
-  const [sendPulse,setSendPulse]=useState(0);
+
   const submitting = useRef(false);
   const draftRef = useRef(draft); draftRef.current = draft;
   const [wantNew, setWantNew] = useState(false);
@@ -153,15 +156,23 @@ export function Conversation({ runtime = 'codex', runtimeControls, onDraftState,
     if (!project || !ready) throw {kind: 'serverExit'};
     return invoke<T>('conversation_request', {runtime, root: project.root, generation: project.generation, action});
   }
-  async function list(more = false) {
+  async function list(more = false, reset = false) {
+    if(listRequest.current)return;
     const key = binding;
     const mode=historyMode;
+    const requestId=Symbol();listRequest.current=requestId;setListing(true);
     try {
       const page = await request<Page<Thread>>({type:archivedList?'listArchivedThreads':allSources?'listAllThreads':'listThreads',cursor:more ? cursor : null});
-      if (current.current !== key || historyView.current!==mode) return;
-      setThreads(previous => more ? [...previous,...page.data.filter(next => !previous.some(old => old.id === next.id))] : [...opened.current.filter(local => Boolean(local.clientArchived)===archivedList&&!page.data.some(saved => saved.id === local.id)),...page.data]);
-      setCursor(page.nextCursor ?? null);
-    } catch (error) { if (current.current === key) setError(errorText(error)); }
+      if (current.current !== key || historyView.current!==mode || listRequest.current!==requestId) return;
+      setThreads(previous => {
+        const base=[...(more||!reset?previous:[]),...opened.current.filter(local=>Boolean(local.clientArchived)===archivedList)];
+        const byId=new Map(base.map(thread=>[thread.id,thread]));
+        for(const thread of page.data)byId.set(thread.id,thread);
+        return [...byId.values()];
+      });
+      if(more||reset||threads.length===0)setCursor(page.nextCursor && page.nextCursor!==(more?cursor:null) ? page.nextCursor : null);
+    } catch (error) { if (current.current === key && historyView.current===mode && listRequest.current===requestId) setError(errorText(error)); }
+    finally {if(listRequest.current===requestId){listRequest.current=null;setListing(false);}}
   }
   async function loadModels(sessionId:string|null=selected) {
     const key = binding;setModelsLoading(true);
@@ -185,7 +196,7 @@ export function Conversation({ runtime = 'codex', runtimeControls, onDraftState,
     setThreads([]); setSelected(null); setThread(null); setCursor(null); setHistoryCursor(null); setModels([]);setModelsLoading(false); let choice = {model:'',effort:''}; try { choice=parseModelChoice(localStorage.getItem(runtime==='codex'?`corpstex.model:${project?.root}`:`corpstex.model:${runtime}:${project?.root}`)); } catch {} setModel(choice.model); setEffort(choice.effort); setError(''); setBusy(false); setAttachedSkills([]); setImages([]); setDraft(''); setDraftTurn(undefined); setDelivery('');
     // A server generation is the identity of a connection; old callbacks cannot reroute new work.
   }, [binding]);
-  useEffect(() => {if (ready && visible) {void list();void loadModels();}}, [binding, ready, visible, historyMode]);
+  useEffect(() => {listRequest.current=null;setListing(false);if (ready && visible) {void list();void loadModels();}}, [binding, ready, visible, historyMode]);
   useEffect(() => {
     if (!selected || !project || !visible) return;
     let disposed = false; let inFlight = false; let after: number | null = null;
@@ -213,7 +224,8 @@ export function Conversation({ runtime = 'codex', runtimeControls, onDraftState,
   useEffect(() => {if (ready && wantNew && !busy) {setWantNew(false);void open();}}, [ready, wantNew, busy]);
 
   useEffect(()=>onDraftState?.(Boolean(draft||images.length||readingImages)),[draft,images.length,readingImages,onDraftState]);
-  useEffect(()=>onSessionState?.(thread,Boolean(draft||images.length||readingImages||busy)),[thread,draft,images.length,readingImages,busy]);
+  const sessionPending=Boolean(draft||images.length||readingImages||busy);
+  useEffect(()=>onSessionState?.(thread,sessionPending),[thread,sessionPending]);
   const attempted = useRef(0);
   useEffect(()=>{if(ready && autoOpen && attempted.current!==autoOpen){attempted.current=autoOpen;if(initialThread && selected===initialThread)return;void open(initialThread?{id:initialThread}:undefined,true);}},[ready,binding,autoOpen]);
   const lastTurn = turns[turns.length - 1];
@@ -259,7 +271,7 @@ export function Conversation({ runtime = 'codex', runtimeControls, onDraftState,
         await request({type:'send',threadId:id,text,images:sentImages.map(image=>image.url),skills:referencedSkills(text,attachedSkills),model:model || (effort ? reasoningModel?.model : null) || null,effort:effort || null});
       }
       if(current.current===key) {
-        setSendPulse(previous=>previous+1);
+
         if (draftRef.current === text && imagesRef.current === sentImages) { setAttachedSkills([]); setImages([]); setDraft(''); setDraftTurn(undefined); }
         setDelivery(turnId ? 'Steering accepted for this turn.' : `Message accepted by ${runtimeName}.`);
         void list();
@@ -350,17 +362,21 @@ export function Conversation({ runtime = 'codex', runtimeControls, onDraftState,
   function changeImages(next:ImageAttachment[]) {setImages(next);setDelivery('');if(draftTurn===undefined)setDraftTurn(active?.id??null);}
   function changeDraft(value:string) {setDraft(value);setDelivery('');if(!value&&!images.length)setDraftTurn(undefined);else if(draftTurn===undefined)setDraftTurn(active?.id??null);}
 
+  const libraryActions=useRef({open,list});libraryActions.current={open,list};
+  const openLibraryThread=useCallback((entry:Thread)=>{void libraryActions.current.open(entry);},[]);
+  const moreLibraryThreads=useCallback(()=>{void libraryActions.current.list(true);},[]);
+
   const loadImage=useMemo(()=>(path:string)=>invoke<string>('conversation_image',{runtime,root:project?.root,generation:project?.generation,threadId:selected,path}),[binding,selected,invoke]);
   return <div className="session-content" ref={container}>
-    {settingsOpen && <Settings tools={<McpStatus runtime={runtime} project={project} threadId={selected} invoke={invoke} errorText={errorText}/>} providers={<OpenCodeProviderSettings project={runtime==='opencode'?project:null} invoke={invoke} errorText={errorText}/>} onClose={onCloseSettings} preferences={preferences} onPreferences={onPreferences} storageError={storageError} modelControls={<>{modelControls}<button type="button" disabled={!ready} onClick={()=>void loadModels()}>Refresh models</button>{catalogError&&<p role="alert">{catalogError}</p>}</>} runtime={<RuntimeSettings runtime={runtime} project={project} invoke={invoke} errorText={errorText}/>} />}
+    {settingsOpen && <Settings editorRoot={editorRoot||project?.root||''} tools={<McpStatus runtime={runtime} project={project} threadId={selected} invoke={invoke} errorText={errorText}/>} providers={<OpenCodeProviderSettings project={runtime==='opencode'?project:null} invoke={invoke} errorText={errorText}/>} onClose={onCloseSettings} preferences={preferences} onPreferences={onPreferences} storageError={storageError} modelControls={<>{modelControls}<button type="button" disabled={!ready} onClick={()=>void loadModels()}>Refresh models</button>{catalogError&&<p role="alert">{catalogError}</p>}</>} runtime={<RuntimeSettings runtime={runtime} project={project} invoke={invoke} errorText={errorText}/>} />}
     <aside className="projects" aria-labelledby={ids('projects-title')}>
-      <div className="thread-actions"><button type="button" disabled={busy || wantNew} onClick={() => {void open();}}>{wantNew ? 'Connecting…' : 'New conversation'}</button><button type="button" disabled={!ready || busy} onClick={() => {void list();void loadModels();}}>Refresh</button></div>
+      <div className="sidebar-header">{controls}{sidebarToggle}</div>
+      <div className="thread-actions"><button type="button" disabled={busy || wantNew} onClick={() => {void open();}}>{wantNew ? 'Connecting…' : 'New conversation'}</button><button type="button" aria-label="Refresh conversations" title="Refresh conversations" disabled={!ready || busy || listing} onClick={() => {void list(false,true);void loadModels();}}><svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 7a7 7 0 0 1 11.5-1L20 9M4 15l2.4 3A7 7 0 0 0 18 17"/></svg></button></div>
       <div className="panel-heading"><h2 id={ids('projects-title')}>Conversations</h2><span className="count">{threads.length}</span></div>
-      {controls}
-      {runtime==='codex'&&<label className="history-filter">History<select aria-label="Conversation history view" value={historyMode} disabled={busy} onChange={event=>{setArchivedList(event.target.value==='archived');setAllSources(event.target.value==='all');setThreads([]);setCursor(null);}}><option value="active">Interactive</option><option value="all">All sources · includes subagents</option><option value="archived">Archived · all sources</option></select></label>}
-      <input className="thread-search" type="search" aria-label="Filter conversations" placeholder="Find a thread…" value={threadSearch} onChange={event=>setThreadSearch(event.target.value)}/><nav className="thread-list" aria-label="Conversations">{threads.filter(entry=>[entry.name,entry.preview,entry.id].some(value=>value?.toLowerCase().includes(threadSearch.trim().toLowerCase()))).map(entry => <button type="button" key={entry.id} title={`${entry.name||entry.preview||'New conversation'} · ${entry.id}`} aria-current={selected === entry.id ? 'page' : undefined} disabled={busy} onClick={() => {void open(entry);}}><span>{entry.name || entry.preview || 'New conversation'}</span></button>)}</nav>
-      {!threadSearch && threads.length === 0 && <p className="panel-note thread-empty">{ready ? 'No conversations yet.' : 'Disconnected'}</p>}{threadSearch && !threads.some(entry=>[entry.name,entry.preview,entry.id].some(value=>value?.toLowerCase().includes(threadSearch.trim().toLowerCase()))) && <p className="panel-note thread-empty" role="status">No matching conversations.</p>}
-      {cursor && <button className="more-threads" type="button" onClick={() => {void list(true);}}>More threads</button>}
+
+      <ConversationLibrary key={`${runtime}:${project?.root??''}`} scope={`${runtime}:${project?.root??''}`} threads={threads} selected={selected} disabled={busy||exiting} ready={ready} hasMore={Boolean(cursor)} loading={listing} onMore={moreLibraryThreads} onOpen={openLibraryThread}/>
+      {runtime==='codex'&&<details className="library-sources"><summary>History sources</summary><label className="history-filter">History<select aria-label="Conversation history view" value={historyMode} disabled={busy} onChange={event=>{setArchivedList(event.target.value==='archived');setAllSources(event.target.value==='all');setThreads([]);setCursor(null);}}><option value="active">Interactive</option><option value="all">All sources · includes subagents</option><option value="archived">Archived · all sources</option></select></label></details>}
+
     </aside>
     <main id={ids('workspace')} className="workspace" data-working={Boolean(active)} tabIndex={-1} aria-labelledby={ids('workspace-title')}>
       <div className="workspace-atmosphere" aria-hidden="true"><i className="matrix-red"/><i className="matrix-green"/><i className="matrix-blue"/><span className="graphite-frost"/></div>
@@ -382,10 +398,10 @@ export function Conversation({ runtime = 'codex', runtimeControls, onDraftState,
         {project && project.status !== 'ready' && selected && <p role="alert">The server connection was lost. Work will not resume automatically. Reconnect the project and resume its saved thread.</p>}
         {Boolean(project?.pendingRequests) && <p role="alert">Response needed in the Approval center.</p>}
         <form onSubmit={event=>{event.preventDefault();void send();}}>
-          {sendPulse>0&&<span key={sendPulse} className="composer-send-burst" aria-hidden="true"/>}
-          <div className="composer-heading"><label htmlFor={ids('message')}>Message</label>{selected && <p className="message-destination" id={ids('message-destination')}><span>{targetTurn ? 'Steering' : 'Sending to'} · {thread?.name || selected.slice(0,8)}</span><span>{project?.root}{targetTurn ? ` · Turn ${targetTurn.slice(0,8)}` : ''}</span></p>}</div><ComposerInput idPrefix={sessionId} key={`${binding}:${selected}`} value={draft} onChange={changeDraft} onSend={()=>void send()} onCommand={composerCommand} skills={attachedSkills} onSkills={setAttachedSkills} images={images} onImages={changeImages} onReading={setReadingImages} project={project} disabled={Boolean(thread?.clientArchived)||!selected||!ready||busy||(runtime==='opencode'&&Boolean(active))} invoke={invoke} errorText={errorText} selected={Boolean(selected)} trailing={modelControls}/>
+
+          <div className="composer-heading"><label htmlFor={ids('message')}>Message</label>{selected && <p className="message-destination" id={ids('message-destination')}><span>{targetTurn ? 'Steering' : 'Sending to'} · {thread?.name || selected.slice(0,8)}</span><span>{project?.root}{targetTurn ? ` · Turn ${targetTurn.slice(0,8)}` : ''}</span></p>}</div><ComposerInput idPrefix={sessionId} key={`${binding}:${selected}`} value={draft} onChange={changeDraft} onSend={()=>void send()} onCommand={composerCommand} skills={attachedSkills} onSkills={setAttachedSkills} images={images} onImages={changeImages} onReading={setReadingImages} project={project} disabled={Boolean(thread?.clientArchived)||!selected||!ready||busy||(runtime==='opencode'&&Boolean(active))} invoke={invoke} errorText={errorText} selected={Boolean(selected)} trailing={modelControls} dockActions={<div className="composer-dock-actions">{staleTarget && !active && <button type="button" onClick={()=>setDraftTurn(null)}>Use as new message</button>}{active && <button type="button" className="stop-turn" title="Stop current turn" disabled={!ready || busy} onClick={()=>{void interrupt();}}>Stop turn</button>}<button type="submit" title={targetTurn?'Steer turn (Shift+Enter)':'Send message (Shift+Enter)'} disabled={Boolean(thread?.clientArchived) || !selected || !ready || busy || readingImages || (!draft.trim() && !images.length) || staleTarget || Boolean(!targetTurn && active)}>{busy ? 'Sending…' : targetTurn ? 'Steer turn' : 'Send message'}</button></div>}/>
           {catalogError && <p>Model selection unavailable: {catalogError} {runtimeName} defaults remain in use.</p>}
-          <div className="composer-actions"><p id={ids('composer-help')}>{!ready?'Disconnected':!selected?'Select a conversation.':thread?.clientArchived?'Archived · restore to send messages.':staleTarget?'The target turn ended. Your draft has not been sent.':targetTurn?'Shift+Enter to steer':active?'A turn is active. Wait for it to finish before starting another.':'Shift+Enter to send'}</p><div className="send-actions">{staleTarget && !active && <button type="button" onClick={()=>setDraftTurn(null)}>Use as new message</button>}{active && <button type="button" className="stop-turn" disabled={!ready || busy} onClick={()=>{void interrupt();}}>Stop turn</button>}<button type="submit" disabled={Boolean(thread?.clientArchived) || !selected || !ready || busy || readingImages || (!draft.trim() && !images.length) || staleTarget || Boolean(!targetTurn && active)}>{busy ? 'Sending…' : targetTurn ? 'Steer turn' : 'Send message'}</button></div></div>
+          <div className="composer-actions"><p id={ids('composer-help')}>{!ready?'Disconnected':!selected?'Select a conversation.':thread?.clientArchived?'Archived · restore to send messages.':staleTarget?'The target turn ended. Your draft has not been sent.':targetTurn?'Shift+Enter to steer':active?'A turn is active. Wait for it to finish before starting another.':'Shift+Enter to send'}</p></div>
           {delivery && <p className="delivery-status" role="status">{delivery}</p>}
         </form>
       </div>

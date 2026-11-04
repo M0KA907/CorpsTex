@@ -1,3 +1,4 @@
+import { EditorSettings } from './editor/EditorSettings';
 import { ActivityBar, activityPresets } from './ActivityBar';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { defaults, type Preferences } from './preferences';
@@ -134,7 +135,7 @@ export function RuntimeSettings({runtime='codex', project, invoke, errorText}: {
   </section>;
 }
 
-export function Settings({onClose,preferences,onPreferences,storageError,modelControls,runtime,providers,tools}: {onClose:()=>void;preferences:Preferences;onPreferences:(next:Preferences)=>void;storageError:string;modelControls:ReactNode;runtime:ReactNode;providers:ReactNode;tools?:ReactNode}) {
+export function Settings({onClose,preferences,onPreferences,storageError,modelControls,runtime,providers,tools,editorRoot=''}: {onClose:()=>void;preferences:Preferences;onPreferences:(next:Preferences)=>void;storageError:string;modelControls:ReactNode;runtime:ReactNode;providers:ReactNode;tools?:ReactNode;editorRoot?:string}) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [section,setSection] = useState('appearance');
   useEffect(()=>{const node=dialog.current;node?.showModal();return()=>node?.close();},[]);
@@ -148,7 +149,7 @@ export function Settings({onClose,preferences,onPreferences,storageError,modelCo
   ];
   return <dialog className="settings-dialog" ref={dialog} aria-labelledby="settings-title" onCancel={event=>{event.preventDefault();onClose();}} onClose={event=>{if(!event.currentTarget.open)onClose();}}>
     <header className="settings-header"><div><h1 id="settings-title">Settings</h1></div><button type="button" autoFocus onClick={onClose} aria-label="Close settings">Close <span aria-hidden="true">×</span></button></header>
-    <nav className="settings-nav" aria-label="Settings categories">{[['appearance','Appearance'],['activity','Thinking bar'],['providers','Providers'],['models','Model & reasoning'],['tools','MCP tools'],['runtime','Runtime & permissions']].map(([id,label])=><button type="button" key={id} aria-current={section===id?'page':undefined} onClick={()=>setSection(id)}>{label}</button>)}</nav>
+    <nav className="settings-nav" aria-label="Settings categories">{[['appearance','Appearance'],['activity','Thinking bar'],['providers','Providers'],['models','Model & reasoning'],['editor','Editor'],['tools','MCP tools'],['runtime','Runtime & permissions']].map(([id,label])=><button type="button" key={id} aria-current={section===id?'page':undefined} onClick={()=>setSection(id)}>{label}</button>)}</nav>
     <div className="settings-body" key={section}>
       {section==='appearance' && <section className="settings-section" aria-labelledby="appearance-title"><h2 id="appearance-title">Appearance</h2><p>Saved on this device.</p><div className="palette-preview" aria-hidden="true"><span>c/</span><div><i/><i/><i/></div></div>{fields.map(field=><label className="settings-field" key={field.key}><span>{field.label}</span><select value={preferences[field.key]} onChange={event=>onPreferences({...preferences,[field.key]:event.target.value})}>{field.options.map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label>)}<p className="settings-caption">Respects system reduced motion.</p><button type="button" onClick={()=>onPreferences({...defaults})}>Reset appearance</button>{storageError&&<p role="alert">{storageError}</p>}</section>}
       {section==='activity' && <section className="settings-section" aria-labelledby="activity-settings-title"><h2 id="activity-settings-title">Thinking bar</h2><label className="settings-field"><span>Show activity as</span><select value={preferences.activityDisplay} onChange={event=>onPreferences({...preferences,activityDisplay:event.target.value as Preferences['activityDisplay']})}><option value="bar">Full bar</option><option value="compact">Compact</option><option value="hidden">Hidden</option></select></label><div className="activity-preview"><p className="settings-caption">Preview</p><ActivityBar preset={preferences.activityPreset} label="Thinking" active preview compact={preferences.activityDisplay==='compact'}/></div><div className="activity-presets" role="group" aria-label="Thinking bar styles">{activityPresets.map(([id,name])=><button type="button" key={id} aria-pressed={preferences.activityPreset===id} onClick={()=>onPreferences({...preferences,activityPreset:id})}><ActivityBar preset={id} label={name} active preview compact/></button>)}</div>{storageError&&<p role="alert">{storageError}</p>}</section>}
@@ -156,6 +157,7 @@ export function Settings({onClose,preferences,onPreferences,storageError,modelCo
       {section==='runtime' && runtime}
       {section==='providers' && providers}
       {section==='tools' && tools}
+      {section==='editor' && <EditorSettings root={editorRoot}/>}
     </div>
   </dialog>;
 }

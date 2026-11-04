@@ -22,7 +22,7 @@ export function referencedSkills(value:string, skills:Skill[]) {
   const names=new Set(value.split(/\s+/).map(token=>token.replace(/[.,;!?)]*$/,'')));
   return skills.filter(skill=>names.has(`$${skill.name}`)).map(({name,path})=>({name,path}));
 }
-export function ComposerInput({idPrefix = '',value,onChange,onSend,onCommand,skills,onSkills,images,onImages,onReading,project,disabled,invoke,errorText,selected,trailing}:{idPrefix?:string;onReading:(reading:boolean)=>void;images:ImageAttachment[];onImages:(images:ImageAttachment[])=>void;value:string;onChange:(value:string)=>void;onSend:()=>void;onCommand:(id:string)=>void;skills:Skill[];onSkills:(skills:Skill[])=>void;project:{runtime?:'codex'|'opencode';root:string;generation:number;status:string}|null;disabled:boolean;invoke:Invoke;errorText:(error:unknown)=>string;selected:boolean;trailing?:ReactNode}) {
+export function ComposerInput({idPrefix = '',value,onChange,onSend,onCommand,skills,onSkills,images,onImages,onReading,project,disabled,invoke,errorText,selected,trailing,dockActions}:{idPrefix?:string;onReading:(reading:boolean)=>void;images:ImageAttachment[];onImages:(images:ImageAttachment[])=>void;value:string;onChange:(value:string)=>void;onSend:()=>void;onCommand:(id:string)=>void;skills:Skill[];onSkills:(skills:Skill[])=>void;project:{runtime?:'codex'|'opencode';root:string;generation:number;status:string}|null;disabled:boolean;invoke:Invoke;errorText:(error:unknown)=>string;selected:boolean;trailing?:ReactNode;dockActions?:ReactNode}) {
   const fileInput=useRef<HTMLInputElement>(null);
   const imagesRef=useRef(images); imagesRef.current=images;
   const readingRef=useRef(false);
@@ -44,6 +44,16 @@ export function ComposerInput({idPrefix = '',value,onChange,onSend,onCommand,ski
     finally {readingRef.current=false;if(mounted.current){setReading(false);onReading(false);}}
   }
   const textarea=useRef<HTMLTextAreaElement>(null);
+  function resizeInput() {
+    const node=textarea.current;if(!node)return;
+    node.style.height='auto';node.style.height=`${node.scrollHeight}px`;
+  }
+  useEffect(resizeInput,[value,selected]);
+  useEffect(()=>{
+    const node=textarea.current;if(!node)return;let width=node.clientWidth;
+    const observer=new ResizeObserver(()=>{if(node.clientWidth!==width){width=node.clientWidth;resizeInput();}});
+    observer.observe(node);return()=>observer.disconnect();
+  },[]);
   const [manual,setManual]=useState<'commands'|'skills'|null>(null);
   const [dismissed,setDismissed]=useState<string|null>(null);
   const [query,setQuery]=useState('');
@@ -84,9 +94,9 @@ export function ComposerInput({idPrefix = '',value,onChange,onSend,onCommand,ski
     }
   }
   return <div className="composer-input">
-    {mode&&<section className="composer-picker" aria-label={mode==='skills'?'Available skills':'Composer commands'} onKeyDown={event=>{if(event.key==='Escape'){event.preventDefault();close();}}}>
+    {mode&&<section className="composer-picker" aria-label={mode==='skills'?'Available skills':'Composer commands'} onKeyDown={event=>{if(event.key==='Escape'){event.preventDefault();close();}if(event.key==='ArrowDown'&&event.target instanceof HTMLInputElement){event.preventDefault();event.currentTarget.querySelector<HTMLButtonElement>('.composer-options button:not(:disabled)')?.focus();}}}>
       <header><strong>{mode==='skills'?'Project skills':'Commands'}</strong><span>{mode==='skills'?'Reported by Codex':'CorpsTex actions'}</span><button type="button" aria-label="Close command picker" onClick={close}>×</button></header>
-      {manual&&<input type="search" aria-label={`Search ${mode}`} placeholder={`Search ${mode}…`} value={query} onChange={event=>setQuery(event.target.value)}/>}
+      {manual&&<input type="search" autoFocus aria-label={`Search ${mode}`} placeholder={`Search ${mode}…`} value={query} onChange={event=>setQuery(event.target.value)}/>}
       {loading&&<p role="status">Loading skills…</p>}{failure&&<p role="alert">{failure}</p>}{warnings&&<p role="status">Some skills could not load: {warnings}</p>}
       <div className="composer-options" onKeyDown={event=>{
         if(!['ArrowDown','ArrowUp','Home','End'].includes(event.key))return;
@@ -106,6 +116,6 @@ export function ComposerInput({idPrefix = '',value,onChange,onSend,onCommand,ski
       if(event.key==='Enter'&&mode&&token&&!event.altKey&&!event.ctrlKey&&!event.metaKey){event.preventDefault();const exact=rows.find(row=>row.name===(mode==='skills'?'$':'/')+token.query);if(exact)choose(exact);else event.currentTarget.parentElement?.querySelector<HTMLButtonElement>('.composer-options button:not(:disabled)')?.focus();return;}
       if(event.key==='Enter'&&event.shiftKey&&!event.altKey&&!event.ctrlKey&&!event.metaKey){event.preventDefault();onSend();}
     }} disabled={disabled} aria-describedby={(selected?['composer-help','message-destination']:['composer-help']).map(id=>idPrefix?`${idPrefix}-${id}`:id).join(' ')} placeholder={selected?project?.runtime==='opencode'?'Message OpenCode… paste images':'Message Codex… paste images, / commands, $ skills':'Start or select a conversation'}/>
-    <div className="composer-tools"><input ref={fileInput} type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden onChange={event=>{const files=Array.from(event.target.files??[]);event.target.value='';void attach(files);}}/><button type="button" disabled={disabled||reading} onClick={()=>fileInput.current?.click()}>{reading?'Reading images…':'Attach images'}</button><button type="button" aria-expanded={mode==='commands'} onClick={()=>{setManual(mode==='commands'?null:'commands');setQuery('');}}> <span aria-hidden="true">/</span> Commands</button><button type="button" disabled={project?.status!=='ready'} aria-expanded={mode==='skills'} onClick={()=>{setManual(mode==='skills'?null:'skills');setQuery('');}}> <span aria-hidden="true">$</span> Skills</button>{trailing}</div>
+    <div className="composer-tools"><input ref={fileInput} type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden onChange={event=>{const files=Array.from(event.target.files??[]);event.target.value='';void attach(files);}}/><button type="button" aria-label={reading?'Reading images…':'Attach images'} title="Attach images (or paste from clipboard)" disabled={disabled||reading} onClick={()=>fileInput.current?.click()}><svg aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="m8 12 6-6a3 3 0 0 1 4 4l-8 8a5 5 0 0 1-7-7l9-9"/><path d="m6 14 8-8"/></svg></button><button type="button" aria-label="Commands" title="Commands (type /)" disabled={disabled} aria-expanded={mode==='commands'} onClick={()=>{setManual(mode==='commands'?null:'commands');setQuery('');}}> <span aria-hidden="true">/</span></button><button type="button" aria-label="Skills" title="Skills (type $)" disabled={disabled||project?.status!=='ready'} aria-expanded={mode==='skills'} onClick={()=>{setManual(mode==='skills'?null:'skills');setQuery('');}}> <span aria-hidden="true">$</span></button></div>{dockActions}<div className="composer-configuration">{trailing}</div>
   </div>;
 }

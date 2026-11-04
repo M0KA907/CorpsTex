@@ -1,0 +1,73 @@
+/* Editor surfaces use CorpsTex tokens; Monaco stays below trusted approval UI. */
+.session-workspace { position:relative; }
+.sidebar-flip { flex:none; margin-bottom:.45rem; font-size:.75rem; }
+.session-workspace[data-sidebar-view=files] .session-panel>.session-content>.projects { display:none; }
+.session-workspace .file-explorer { grid-area:sidebar; display:flex; flex-direction:column; gap:.6rem; min-width:0; min-height:0; overflow:auto; }
+.session-workspace .file-explorer[hidden] { display:none; }
+.session-workspace[data-file-active=true] .session-focused>.session-content>.workspace,
+.session-workspace[data-file-active=true] .session-focused>.session-content>.timeline { display:none; }
+.source-panel { grid-area:primary; display:flex; flex-direction:column; min-width:0; min-height:0; background:var(--color-canvas); overflow:hidden; }
+.source-editor { display:flex; flex-direction:column; flex:1; min-height:0; min-width:0; }
+.editor-heading { display:flex; align-items:center; justify-content:space-between; gap:1rem; padding:.75rem 1rem; border-bottom:1px solid var(--color-border-soft); }
+.editor-heading>div { min-width:0; display:flex; align-items:center; gap:.75rem; }
+.editor-heading strong { font:500 .85rem var(--font-ui); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.editor-heading button { flex:none; font-size:.75rem; }
+.editor-eyebrow { font-size:.65rem; letter-spacing:.12em; color:var(--color-faint); }
+.monaco-host { flex:1; min-width:0; min-height:8rem; overflow:hidden; }
+.editor-status { display:flex; flex-wrap:wrap; justify-content:space-between; gap:.5rem; padding:.4rem .8rem; color:var(--color-muted); font-size:.7rem; border-top:1px solid var(--color-border-soft); }
+.editor-settings-trigger { align-self:flex-end; margin:.25rem .75rem; font-size:.7rem; padding:.2rem .6rem; }
+.file-tab[data-preview=true] [role=tab] { font-style:italic; }
+.editor-notice { position:absolute; z-index:15; right:1rem; bottom:2rem; display:flex; align-items:center; gap:1rem; max-width:min(90%,40rem); padding:.6rem .8rem; border:1px solid var(--color-border); background:var(--color-raised); box-shadow:0 4px 24px #0005; border-radius:.4rem; font-size:.8rem; }
+.editor-notice span { overflow-wrap:anywhere; }
+.editor-notice button { background:transparent; border:0; }
+.editor-conflict,.editor-warning { margin:0; padding:.65rem 1rem; border-bottom:1px solid var(--color-border); background:var(--color-raised); font-size:.8rem; overflow-wrap:anywhere; }
+.editor-conflict p { margin:.4rem 0; }
+.editor-conflict button { margin:.25rem .5rem .25rem 0; font-size:.75rem; }
+.explorer-root { margin:0; color:var(--color-muted); font-size:.75rem; overflow-wrap:anywhere; }
+.explorer-breadcrumb { display:flex; align-items:center; gap:.4rem; min-width:0; font-size:.75rem; }
+.explorer-breadcrumb span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.explorer-breadcrumb button { padding:.2rem .4rem; }
+.explorer-list { flex:1; min-height:3rem; overflow:auto; }
+.explorer-entry { display:flex; gap:.25rem; border-radius:.25rem; }
+.explorer-entry[data-selected=true] { background:var(--color-surface-hover); }
+.explorer-entry>button { display:flex; align-items:center; gap:.6rem; flex:1; min-width:0; padding:.35rem .5rem; border:0; background:transparent; text-align:left; font-size:.8rem; }
+.explorer-entry>button span:nth-child(2) { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.explorer-entry>button.explorer-select { flex:0; }
+.file-actions { display:flex; flex-direction:column; gap:.5rem; border-top:1px solid var(--color-border); padding-top:.75rem; }
+.file-actions p { margin:0; font-size:.75rem; overflow-wrap:anywhere; }
+.file-actions label { font-size:.7rem; color:var(--color-muted); }
+.file-actions input { margin-top:.3rem; width:100%; min-width:0; }
+.file-actions>div { display:flex; flex-wrap:wrap; gap:.35rem; }
+.file-actions button { padding:.35rem .5rem; font-size:.7rem; }
+.editor-settings-dialog { grid-template-columns:minmax(0,1fr); grid-template-rows:auto minmax(0,1fr); }
+.editor-settings-dialog .settings-header { grid-column:1; }
+.editor-settings-dialog .settings-body { grid-column:1; }
+.editor-settings { min-width:0; }
+.editor-settings p { overflow-wrap:anywhere; }
+.editor-settings form { display:flex; gap:.5rem; align-items:end; flex-wrap:wrap; }
+.editor-settings form input { display:block; margin-top:.3rem; }
+.editor-settings .settings-field input:not([type=checkbox]) { min-width:0; width:100%; }
+.editor-settings-tabs,.server-actions { display:flex; flex-wrap:wrap; gap:.5rem; margin:.5rem 0; }
+.editor-settings [aria-pressed=true] { border-color:var(--color-muted); background:var(--color-raised); }
+@media(max-width:759px) {
+ .session-workspace .file-explorer { display:flex; flex-direction:column; flex-wrap:nowrap; padding:.5rem .75rem; max-height:32dvh; }
+ .file-explorer .panel-heading { display:flex!important; }
+ .file-explorer .explorer-list { flex:none; min-height:4rem; max-height:12rem; }
+ .editor-heading { padding:.5rem; gap:.5rem; }
+ .editor-eyebrow { display:none; }
+ .editor-heading button { font-size:.65rem; padding:.4rem; }
+ .editor-conflict { max-height:10rem; overflow:auto; }
+ .editor-status { font-size:.6rem; }
+ .editor-settings .settings-field { display:flex; flex-direction:column; align-items:stretch; gap:.4rem; }
+}
+@media(prefers-reduced-motion:reduce) { .source-editor * { scroll-behavior:auto!important; } }
+
+.session-workspace .thread-actions { align-items:center; flex-wrap:nowrap; }
+.session-workspace .thread-actions button { white-space:nowrap; font-size:.72rem; padding:.4rem .5rem; min-height:2.1rem; display:flex; align-items:center; justify-content:center; }
+.session-workspace .thread-actions button:nth-child(2) { background:transparent; border-color:var(--color-border-soft); box-shadow:inset 0 1px 0 var(--color-glass-highlight); }
+.session-workspace .thread-actions button:nth-child(2):hover { background:var(--color-surface-hover); }
+
+.session-workspace .file-explorer { padding:.65rem; }
+.file-explorer .thread-actions { padding:0; }
+.file-explorer input { box-sizing:border-box; width:100%; min-width:0; border:1px solid var(--color-border); border-radius:.35rem; background:var(--color-surface); color:var(--color-text); padding:.45rem .55rem; font:inherit; font-size:.75rem; }
+.file-explorer .panel-heading { padding:.25rem 0; }

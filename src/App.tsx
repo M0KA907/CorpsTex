@@ -157,6 +157,8 @@ export default function App() {
   const [invalidRoot, setInvalidRoot] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [failure, setFailure] = useState('');
+  useEffect(()=>{if(invalidRoot||failure)setProjectPickerOpen(true);},[invalidRoot,failure]);
+  useEffect(()=>{if(projectPickerOpen)requestAnimationFrame(()=>{if(invalidRoot||failure)rootInput.current?.focus();else document.querySelector<HTMLInputElement>('[aria-label="Find a project"]')?.focus();});},[projectPickerOpen,invalidRoot,failure]);
   const [pollFailure, setPollFailure] = useState('');
   const [restart, setRestart] = useState<Project | null>(null);
   const [selectedRoot, setSelectedRoot] = useState('');
@@ -241,20 +243,18 @@ export default function App() {
           <span className="wordmark">CorpsTex</span>
         </div>
         <button className="settings-launcher" type="button" onClick={()=>setSettingsOpen(true)} aria-haspopup="dialog" aria-expanded={settingsOpen} aria-label="Personal settings" title="Personal settings"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="m9 3-1 3-3 1-2 5 2 5 3 1 1 3h6l1-3 3-1 2-5-2-5-3-1-1-3Z"/><circle cx="12" cy="12" r="3.5"/></svg></button>
-        <p className="connection" data-connected={connected > 0 && !pollFailure} role="status">
-          <span className="status-mark" aria-hidden="true" />
-          {pollFailure ? `${runtimeName} status unavailable` : connected ? `${runtimeName} connected · ${connected} projects` : starting ? `${runtimeName} connecting` : `${runtimeName} disconnected`}
-        </p>
+        {(pollFailure||!connected)&&<p className="connection" role="status">
+          {pollFailure ? `${runtimeName} status unavailable` : starting ? `${runtimeName} connecting` : `${runtimeName} disconnected`}
+        </p>}
       </header>
 
-      <SessionWorkspace workspaceRoot={selectedRoot || activeProject?.root || ''} workspaceProjects={view.projects} onActivate={(next,path)=>{setRuntime(next);setSelectedRoot(path);setRoot(path);}} timelineProjects={view.projects} runtime={runtime} onChooseProject={()=>setBrowserOpen(true)} settingsOpen={settingsOpen && !view.exitRequested} onCloseSettings={()=>setSettingsOpen(false)} preferences={preferences} onPreferences={onPreferences} storageError={storageError} approvals={view.approvals} approvalBusy={approvalBusy} approvalInvoke={approvalInvoke} exiting={view.exitRequested} project={activeProject} connect={() => connect()} invoke={invoke} errorText={errorText} runtimeControls={<RuntimePicker value={runtime} disabled={connecting||view.exitRequested} counts={{codex:view.projects.filter(p=>(p.runtime??'codex')==='codex'&&p.status==='ready').length,opencode:view.projects.filter(p=>p.runtime==='opencode'&&p.status==='ready').length}} onChange={next=>void chooseRuntime(next)}/>} controls={<><nav className="workspace-projects" aria-label="Project workspace">{view.projects.map(project=><button type="button" key={`${project.runtime}:${project.root}`} aria-current={project.root===activeRoot&&(project.runtime??'codex')===runtime?'page':undefined} title={project.root} onClick={()=>{setRuntime(project.runtime??'codex');setSelectedRoot(project.root);setRoot(project.root);}}><strong>{project.root.split(/[\\/]/).filter(Boolean).at(-1)||project.root}</strong><small>{project.runtime??'codex'} · {project.status}</small></button>)}</nav><button className="choose-project" type="button" aria-expanded={projectPickerOpen} aria-controls="project-picker" title={activeRoot || 'Choose project folder'} disabled={connecting||starting} onClick={()=>setProjectPickerOpen(open=>!open)}><span>Project</span><strong>{activeRoot.split(/[\\/]/).filter(Boolean).at(-1)||'Choose folder'}</strong><span aria-hidden="true">⌄</span></button>
-        {projectPickerOpen && <div id="project-picker" className="project-picker" onKeyDown={event=>{if(event.key==='Escape'){setProjectPickerOpen(false);event.currentTarget.previousElementSibling instanceof HTMLElement && event.currentTarget.previousElementSibling.focus();}}}>
-          <input type="search" autoFocus aria-label="Find a project" placeholder="Find a project…" value={projectSearch} onChange={event=>setProjectSearch(event.target.value)}/>
-          <nav aria-label="Projects">{runtimeProjects.filter(project=>project.root.toLowerCase().includes(projectSearch.toLowerCase())).map(project=><button type="button" key={project.root} aria-current={activeProject?.root===project.root?'page':undefined} onClick={()=>{setSelectedRoot(project.root);setRoot(project.root);try { localStorage.setItem('corpstex.lastProject',project.root); } catch {} setProjectPickerOpen(false);setProjectSearch('');}}><strong>{project.root.split(/[\\/]/).filter(Boolean).at(-1)||project.root}</strong><small>{project.root}</small><span>{project.status==='ready'?'Connected':project.status==='starting'?'Connecting…':project.status==='failed'?'Connection lost':'Stopped'}</span></button>)}</nav>
-          {!runtimeProjects.some(project=>project.root.toLowerCase().includes(projectSearch.toLowerCase())) && <p className="panel-note">{projectSearch?'No matching projects.':'No projects open.'}</p>}
+      <SessionWorkspace workspaceRoot={selectedRoot || activeProject?.root || ''} workspaceProjects={view.projects} onActivate={(next,path)=>{setRuntime(next);setSelectedRoot(path);setRoot(path);}} timelineProjects={view.projects} runtime={runtime} onChooseProject={()=>setBrowserOpen(true)} settingsOpen={settingsOpen && !view.exitRequested} onCloseSettings={()=>setSettingsOpen(false)} preferences={preferences} onPreferences={onPreferences} storageError={storageError} approvals={view.approvals} approvalBusy={approvalBusy} approvalInvoke={approvalInvoke} exiting={view.exitRequested} project={activeProject} connect={() => connect()} invoke={invoke} errorText={errorText} runtimeControls={<RuntimePicker value={runtime} disabled={connecting||view.exitRequested} counts={{codex:view.projects.filter(p=>(p.runtime??'codex')==='codex'&&p.status==='ready').length,opencode:view.projects.filter(p=>p.runtime==='opencode'&&p.status==='ready').length}} onChange={next=>void chooseRuntime(next)}/>} controls={<><button className="choose-project" type="button" aria-expanded={projectPickerOpen} aria-controls="project-picker" title={activeRoot || 'Choose project folder'} disabled={connecting||starting} onClick={()=>setProjectPickerOpen(open=>!open)}><span>Project</span><strong>{activeRoot.split(/[\\/]/).filter(Boolean).at(-1)||'Choose folder'}</strong><span aria-hidden="true">⌄</span></button>
+        <div id="project-picker" className="project-picker" hidden={!projectPickerOpen} onKeyDown={event=>{if(event.key==='Escape'){setProjectPickerOpen(false);event.currentTarget.previousElementSibling instanceof HTMLElement && event.currentTarget.previousElementSibling.focus();}}}>
+          <input type="search" aria-label="Find a project" placeholder="Find a project…" value={projectSearch} onChange={event=>setProjectSearch(event.target.value)}/>
+          <nav aria-label="Projects">{view.projects.filter(project=>`${project.root} ${project.runtime??'codex'}`.toLowerCase().includes(projectSearch.toLowerCase())).map(project=><button type="button" key={`${project.runtime}:${project.root}`} aria-current={activeProject?.root===project.root&&(project.runtime??'codex')===runtime?'page':undefined} onClick={()=>{setRuntime(project.runtime??'codex');setSelectedRoot(project.root);setRoot(project.root);try { localStorage.setItem('corpstex.lastProject',project.root); } catch {} setProjectPickerOpen(false);setProjectSearch('');}}><strong>{project.root.split(/[\\/]/).filter(Boolean).at(-1)||project.root}</strong><small>{project.root}</small><span>{project.runtime??'codex'}{project.status==='ready'?'':project.status==='starting'?' · Connecting…':project.status==='failed'?' · Connection lost':' · Stopped'}</span></button>)}</nav>
+          {!view.projects.some(project=>`${project.root} ${project.runtime??'codex'}`.toLowerCase().includes(projectSearch.toLowerCase())) && <p className="panel-note">{projectSearch?'No matching projects.':'No projects open.'}</p>}
           <button className="browse-project" type="button" onClick={()=>{setProjectPickerOpen(false);setBrowserOpen(true);}}>Browse folders…</button>
-        </div>}
-        <details className="project-settings" open={invalidRoot || Boolean(failure) || undefined}>
+        <details className="project-settings" open={invalidRoot || Boolean(failure) || Boolean(restart) || undefined}>
         <summary>Connection details</summary>
         {runtimeProjects.length === 0 && <p className="panel-note">No projects open</p>}
         {activeProject && <div className="project-choice"><ProjectStatus project={activeProject}/>{activeProject.status==='failed' && <button type="button" onClick={()=>setRestart(activeProject)}>Review reconnect</button>}</div>}
@@ -266,7 +266,9 @@ export default function App() {
           <button type="submit" disabled={connecting || starting}>{connecting ? 'Connecting…' : 'Connect project'}</button>
         </form>
         {restart && <div className="reconnect"><ProjectStatus project={restart}/><p>Reconnect starts a new server. Interrupted work will not resume automatically.</p><button type="button" onClick={()=>setRestart(null)}>Cancel reconnect</button><button type="button" disabled={connecting} onClick={()=>{void connect(restart);}}>Reconnect server</button></div>}
-      </details></>} />
+      </details></div>
+      {activeProject&&activeProject.status!=='ready'&&<div className="project-recovery"><p role="status">{activeProject.status==='failed'?'Connection lost':activeProject.status==='starting'?'Connecting…':'Server stopped'}</p>{activeProject.status!=='starting'&&<button type="button" onClick={()=>{setProjectPickerOpen(true);setRestart(activeProject);}}>Review reconnect</button>}</div>}
+      </>} />
 
       {pollFailure && <p className="global-error" role="alert">{pollFailure}</p>}
 
@@ -297,6 +299,9 @@ export { ModelPicker, filterModels, recommendedFreeModels } from './ModelPicker'
 export { RuntimeSettings, OpenCodeProviderSettings } from './Settings';
 
 export { parseSessionLayout, serializeSessionLayout, sessionKey, focusSession, closeSession } from './SessionWorkspace';
+export { defaults as editorDefaults, sanitizeOptions, resolveOptions, fileUri, relocatedPath, language, getEditor, openFile, updateFile, saveFile, syncFile, closeFile, discardFile, acceptMerge, acceptDisk, saveSettings, dirty as editorDirty } from './editor/state';
 export { ThreadControls } from './ThreadControls';
 export { RuntimeFields, RuntimeItemDetails, runtimeDetailData, TurnActivity } from './RuntimeDetails';
 export { McpStatusView } from './McpStatus';
+
+export { groupThreads, threadTime, ConversationLibrary } from './ConversationLibrary';

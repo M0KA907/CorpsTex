@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState, type ComponentProps } from 'react';
 import { Conversation, type Thread } from './Conversation';
 import './session-workspace.css';
+import { EditorSurface } from './editor/EditorSurface';
+import { FileExplorer } from './editor/FileExplorer';
+import { EditorChrome } from './editor/EditorChrome';
+import { closeFile, dirty, setActiveFile, showEditorSettings, updateFile, useEditor } from './editor/state';
+import './editor/editor.css';
 
 type Runtime = 'codex' | 'opencode';
 export type SessionTab = { id:string; runtime:Runtime; root:string; threadId?:string };
@@ -40,6 +45,9 @@ export function closeSession(layout:SessionLayout,id:string):SessionLayout {
 
 type Props=ComponentProps<typeof Conversation> & {workspaceRoot:string;workspaceProjects:NonNullable<ComponentProps<typeof Conversation>['project']>[];onActivate:(runtime:Runtime,root:string)=>void};
 export function SessionWorkspace(props:Props) {
+  const editor=useEditor();
+  const [sidebarView,setSidebarView]=useState<'conversations'|'files'>('conversations');
+  const activeFile=editor.files.find(f=>f.id===editor.active);
   const [layout,setLayout]=useState(()=>{try{const raw=typeof window==='undefined'?null:localStorage.getItem(key);const initial=parseSessionLayout(raw);if(!raw){initial.tabs[0].runtime=props.runtime??'codex';initial.tabs[0].root=props.workspaceRoot;}return initial;}catch{const initial=empty();initial.tabs[0].runtime=props.runtime??'codex';initial.tabs[0].root=props.workspaceRoot;return initial;}});
   const [opened,setOpened]=useState<Record<string,number>>({});
   const [notice,setNotice]=useState('');
@@ -67,11 +75,13 @@ export function SessionWorkspace(props:Props) {
     });
   },[external]);
   function focus(id:string) {
+    setActiveFile(null);
     const tab=layout.tabs.find(t=>t.id===id);if(!tab)return;
     if(tab.threadId)setOpened(old=>({...old,[id]:(old[id]??0)+1}));
     setLayout(old=>focusSession(old,id));props.onActivate(tab.runtime,tab.root);
   }
   function open(tab:SessionTab,thread?:Thread) {
+    setActiveFile(null);
     const existing=thread && layout.tabs.find(t=>t.runtime===tab.runtime&&t.root===tab.root&&t.threadId===thread.id);
     if(existing){focus(existing.id);return;}
     if(thread && !tab.threadId && !pending.current.has(tab.id)){setLayout(old=>({...old,tabs:old.tabs.map(t=>t.id===tab.id?{...t,threadId:thread.id}:t)}));setOpened(old=>({...old,[tab.id]:(old[tab.id]??0)+1}));return;}
@@ -92,27 +102,34 @@ export function SessionWorkspace(props:Props) {
     requestAnimationFrame(()=>document.getElementById(`session-tab-${next.active}`)?.focus());
   }
   const active=layout.tabs.find(t=>t.id===layout.active)!;
-  return <div className="session-workspace" ref={host}>
+  const sidebarNavigation=<nav className="sidebar-navigation" aria-label="Sidebar"><button type="button" aria-current={sidebarView==='conversations'?'page':undefined} onClick={()=>setSidebarView('conversations')}>Chats</button><button type="button" aria-label="Show project files" aria-current={sidebarView==='files'?'page':undefined} onClick={()=>setSidebarView('files')}>Files</button></nav>;
+  return <div className="session-workspace" ref={host} data-sidebar-view={sidebarView} data-file-active={Boolean(activeFile)}>
+    <FileExplorer header={sidebarView==='files'?props.controls:null} navigation={sidebarNavigation} root={props.workspaceRoot} hidden={sidebarView!=='files'} onProject={root=>props.onActivate(props.runtime??'codex',root)} onNewConversation={()=>{setSidebarView('conversations');open(active);}}/>
+    <EditorChrome root={activeFile?.root??props.workspaceRoot}/>
     <div className="session-toolbar">
+
       <div role="tablist" aria-label="Open sessions" className="session-tabs" onKeyDown={event=>{
         if(!['ArrowLeft','ArrowRight','Home','End','Delete'].includes(event.key))return;
         const target=event.target as HTMLElement;if(target.getAttribute('role')!=='tab')return;
-        event.preventDefault();const i=layout.tabs.findIndex(t=>`session-tab-${t.id}`===target.id);
-        if(event.key==='Delete'){close(layout.tabs[i]);return;}
-        const index=event.key==='Home'?0:event.key==='End'?layout.tabs.length-1:(i+(event.key==='ArrowRight'?1:-1)+layout.tabs.length)%layout.tabs.length;
-        focus(layout.tabs[index].id);document.getElementById(`session-tab-${layout.tabs[index].id}`)?.focus();
-      }}>{layout.tabs.map(tab=><div className="session-tab" key={tab.id}><button type="button" role="tab" id={`session-tab-${tab.id}`} aria-controls={`session-panel-${tab.id}`} aria-selected={tab.id===layout.active} tabIndex={tab.id===layout.active?0:-1} title={`${tab.runtime} · ${tab.root} · ${tab.threadId??'No session'}`} disabled={props.exiting} onClick={()=>focus(tab.id)}>{titles[tab.id]||tab.threadId?.slice(0,8)||'New session'}<small>{tab.runtime} · {tab.root.split(/[\\/]/).filter(Boolean).at(-1)||'Choose project'}</small></button><button type="button" className="session-close" title="Close this view; runtime work and approvals continue" aria-label={`Close session ${titles[tab.id]||tab.threadId?.slice(0,8)||'New session'}`} disabled={props.exiting} onClick={()=>close(tab)}>×</button></div>)}</div>
+        event.preventDefault();
+        const tabs=Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role=tab]'));
+        const i=tabs.indexOf(target as HTMLButtonElement);
+        if(event.key==='Delete'){const tab=layout.tabs.find(t=>`session-tab-${t.id}`===target.id);if(tab)close(tab);return;}
+        const index=event.key==='Home'?0:event.key==='End'?tabs.length-1:(i+(event.key==='ArrowRight'?1:-1)+tabs.length)%tabs.length;
+        tabs[index]?.click();tabs[index]?.focus();
+      }}>{layout.tabs.map(tab=><div className="session-tab" key={tab.id}><button type="button" role="tab" id={`session-tab-${tab.id}`} aria-controls={`session-panel-${tab.id}`} aria-selected={!activeFile&&tab.id===layout.active} tabIndex={!activeFile&&tab.id===layout.active?0:-1} title={`${tab.runtime} · ${tab.root} · ${tab.threadId??'No session'}`} disabled={props.exiting} onClick={()=>focus(tab.id)}>{titles[tab.id]||tab.threadId?.slice(0,8)||'New session'}<small>{tab.runtime} · {tab.root.split(/[\\/]/).filter(Boolean).at(-1)||'Choose project'}</small></button><button type="button" className="session-close" title="Close this view; runtime work and approvals continue" aria-label={`Close session ${titles[tab.id]||tab.threadId?.slice(0,8)||'New session'}`} disabled={props.exiting} onClick={()=>close(tab)}>×</button></div>)}{editor.files.map(file=><div className="session-tab file-tab" key={file.id} data-preview={file.preview}><button type="button" role="tab" id={`file-tab-${file.id}`} aria-controls="source-panel" aria-selected={file.id===editor.active} tabIndex={file.id===editor.active?0:-1} title={file.root+'/'+file.path} onClick={()=>setActiveFile(file.id)} onDoubleClick={()=>updateFile(file.id,{preview:false})} onKeyDown={event=>{if(event.key==='Delete'){event.preventDefault();event.stopPropagation();closeFile(file.id);}}}>{dirty(file)?'● ':''}{file.conflict?'⚠ ':''}{file.path.split('/').at(-1)}<small>{file.root.split(/[\\/]/).filter(Boolean).at(-1)} · {file.preview?'Preview':'Source'}</small></button><button type="button" className="session-close" aria-label={`Close file ${file.path}`} disabled={file.saving} onClick={()=>closeFile(file.id)}>×</button></div>)}</div>
       <div className="session-layout-controls"><button type="button" aria-label="New tab" title="New tab" disabled={props.exiting||layout.tabs.length>=limit} onClick={()=>open(active)}><span aria-hidden="true">+</span></button></div>
     </div>
+    {activeFile&&<div id="source-panel" className="source-panel" role="tabpanel" aria-labelledby={`file-tab-${activeFile.id}`}><EditorSurface key={activeFile.id} file={activeFile}/><button type="button" className="editor-settings-trigger" onClick={()=>showEditorSettings()}>Editor settings</button></div>}
     {notice&&<p className="session-notice" role="status">{notice}</p>}
     {layout.tabs.map(tab=>{
       const focused=tab.id===layout.active;const visible=focused;
       const project=props.workspaceProjects.find(p=>(p.runtime??'codex')===tab.runtime&&p.root===tab.root)??null;
       return <div key={tab.id} id={`session-panel-${tab.id}`} role="tabpanel" aria-labelledby={`session-tab-${tab.id}`} hidden={!visible} className={`session-panel ${focused?'session-focused':''}`} >
-        <Conversation {...props} visible={visible} runtime={tab.runtime} project={project} sessionId={tab.id==='main'?'':tab.id} initialThread={tab.threadId} autoOpen={opened[tab.id]??0} onOpenSession={thread=>open(tab,thread)} onSessionState={(thread,busy)=>{
+        <Conversation {...props} editorRoot={activeFile?.root??props.workspaceRoot} sidebarToggle={sidebarNavigation} visible={visible&&!activeFile} runtime={tab.runtime} project={project} sessionId={tab.id==='main'?'':tab.id} initialThread={tab.threadId} autoOpen={opened[tab.id]??0} onOpenSession={thread=>open(tab,thread)} onSessionState={(thread,busy)=>{
           if(busy)pending.current.add(tab.id);else pending.current.delete(tab.id);
           if(thread){const title=thread.name||thread.preview?.slice(0,48)||thread.id.slice(0,8);setTitles(old=>old[tab.id]===title?old:{...old,[tab.id]:title});setLayout(old=>old.tabs.some(t=>t.id===tab.id&&t.threadId!==thread.id)?{...old,tabs:old.tabs.map(t=>t.id===tab.id?{...t,threadId:thread.id}:t)}:old);}
-        }} showTimeline={focused} onDraftState={undefined} controls={focused?props.controls:null} runtimeControls={focused?props.runtimeControls:null} settingsOpen={focused&&props.settingsOpen} connect={async()=>{
+        }} showTimeline={focused} onDraftState={undefined} controls={focused&&sidebarView==='conversations'?props.controls:null} runtimeControls={focused?props.runtimeControls:null} settingsOpen={focused&&props.settingsOpen} connect={async()=>{
           if(!tab.root)return props.connect();
           await props.invoke('connect_project',{runtime:tab.runtime,root:tab.root,restart:null,acknowledgeLoss:false});return true;
         }}/>
