@@ -1,0 +1,82 @@
+/* CorpsTex design tokens — M08 owns portable manifests and custom CSS; this file
+   stays the runtime token boundary. Components consume tokens, never raw colors,
+   so palettes, density, type scale and motion remain user-configurable. */
+:root {
+  color-scheme: dark;
+
+  /* Surfaces: warm charcoal */
+  --color-canvas: #262624;
+  --color-surface: #2d2d2a;
+  --color-raised: #363632;
+  --color-overlay: #3a3a36;
+  --color-border: #40403c;
+  --color-border-soft: #35352f;
+
+  /* Content: soft ivory on charcoal */
+  --color-text: #efede5;
+  --color-muted: #b8b4a9;
+  --color-faint: #98948a;
+
+  /* Accent: terracotta; the ink variant keeps small text readable on raised surfaces */
+  --color-accent: #d97757;
+  --color-accent-ink: #eab188;
+  --color-accent-hover: #e08c6d;
+  --color-on-accent: #211d19;
+
+  /* Status */
+  --color-ok: #9cc08a;
+  --color-status: #e8a45c;
+  --color-danger: #d98a7a;
+  --color-focus: #e6d9bd;
+
+  /* Conversation roles */
+  --color-chat-grid: #8f8b81;
+  --color-chat-user: #e8decd;
+  --color-chat-user-surface: #38372f;
+  --color-chat-reasoning: #a5c0a2;
+  --color-chat-reasoning-surface: #2e3529;
+
+  /* Glass surfaces (header, rails, dialogs) */
+  --color-glass-panel: #262624e6;
+  --color-glass-raised: #31312ef7;
+  --color-glass-border: #efede51a;
+  --color-glass-highlight: #ffffff08;
+  --color-ambient-warm: #ffffff00;
+  --color-ambient-cool: #ffffff06;
+  --shadow-glass: 0 8px 28px #14131152, inset 0 1px 0 #ffffff0a;
+  --shadow-popover: 0 4px 16px #14131138, 0 16px 48px #14131166;
+  --glass-blur: 18px;
+  --color-surface-hover: #ffffff0a;
+  --color-surface-active: #ffffff10;
+
+  /* Typography */
+  --font-ui: 'Aptos', 'Cantarell', 'Segoe UI', sans-serif;
+  --font-mono: 'Cascadia Code', 'Liberation Mono', monospace;
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.875rem;
+
+  /* Shape */
+  --radius-sm: 0.5rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 1rem;
+  --radius-xl: 1.5rem;
+
+  /* Spacing scale */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-12: 3rem;
+
+  /* Layout */
+  --sidebar-width: 16rem;
+  --panel-header-height: 3.25rem;
+
+  /* Motion: restrained by default; reduced-motion media and [data-motion] collapse these */
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --duration-fast: 120ms;
+  --duration-base: 180ms;
+}
