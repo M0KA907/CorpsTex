@@ -11,7 +11,7 @@ import { InlineApprovals, matchingApprovals, type Approval } from './Approvals';
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { RichContent } from './RichContent';
 import { ImageLoader, MessageImage, type ImageAttachment } from './Media';
-import { ExecutionTimeline, type TimelineProject } from './Timeline';
+import { ExecutionTimeline, type TimelineMode, type TimelineProject } from './Timeline';
 import { ThreadControls, type ThreadOperation } from './ThreadControls';
 import { RuntimeItemDetails, TurnActivity, type TurnActivityData } from './RuntimeDetails';
 import { McpStatus } from './McpStatus';
@@ -98,7 +98,7 @@ export const ThreadTranscript = memo(function ThreadTranscript({ turns, runtime 
   })}</>;
 });
 
-export function Conversation({ sidebarToggle, runtime = 'codex', runtimeControls, onDraftState, project, controls, connect, onChooseProject, invoke, errorText, settingsOpen, onCloseSettings, preferences, onPreferences, storageError, approvals, approvalBusy, approvalInvoke, exiting, timelineProjects = [], sessionId = '', initialThread, autoOpen = 0, onOpenSession, onSessionState, showTimeline = true, visible = true, editorRoot = '' }: { sidebarToggle?:ReactNode; editorRoot?:string; visible?:boolean; sessionId?:string; initialThread?:string; autoOpen?:number; onOpenSession?:(thread?:Thread)=>void; onSessionState?:(thread:Thread|null,pending:boolean)=>void; showTimeline?:boolean; runtime?: 'codex'|'opencode'; runtimeControls?:ReactNode; onDraftState?:(pending:boolean)=>void; project: Project | null; controls: ReactNode; connect: () => Promise<boolean>; onChooseProject: () => void; invoke: Invoke; errorText: (error: unknown) => string; settingsOpen:boolean; onCloseSettings:()=>void; preferences:Preferences; onPreferences:(next:Preferences)=>void; storageError:string; approvals:Approval[]; approvalBusy:Set<string>; approvalInvoke:Invoke; exiting:boolean; timelineProjects?:TimelineProject[] }) {
+export function Conversation({ sidebarToggle, runtime = 'codex', runtimeControls, onDraftState, project, controls, connect, onChooseProject, invoke, errorText, settingsOpen, onCloseSettings, preferences, onPreferences, storageError, approvals, approvalBusy, approvalInvoke, exiting, timelineProjects = [], sessionId = '', initialThread, autoOpen = 0, onOpenSession, onSessionState, timelineMode = 'collapsed', onTimelineModeChange, showTimeline = true, visible = true, editorRoot = '' }: { sidebarToggle?:ReactNode; editorRoot?:string; visible?:boolean; sessionId?:string; initialThread?:string; autoOpen?:number; onOpenSession?:(thread?:Thread)=>void; onSessionState?:(thread:Thread|null,pending:boolean)=>void; timelineMode?:TimelineMode; onTimelineModeChange?:(mode:TimelineMode)=>void; showTimeline?:boolean; runtime?: 'codex'|'opencode'; runtimeControls?:ReactNode; onDraftState?:(pending:boolean)=>void; project: Project | null; controls: ReactNode; connect: () => Promise<boolean>; onChooseProject: () => void; invoke: Invoke; errorText: (error: unknown) => string; settingsOpen:boolean; onCloseSettings:()=>void; preferences:Preferences; onPreferences:(next:Preferences)=>void; storageError:string; approvals:Approval[]; approvalBusy:Set<string>; approvalInvoke:Invoke; exiting:boolean; timelineProjects?:TimelineProject[] }) {
   const ids = (name:string) => sessionId ? `${sessionId}-${name}` : name;
   const container = useRef<HTMLDivElement>(null);
   const runtimeName=runtime==='opencode'?'OpenCode':'Codex';
@@ -468,6 +468,6 @@ export function Conversation({ sidebarToggle, runtime = 'codex', runtimeControls
         </form>
       </div>
     </main>
-    {showTimeline && <ExecutionTimeline projects={timelineProjects} history={threadBinding.current === binding && selected === thread?.id ? thread : null} historyProject={project} invoke={invoke}/>}
+    {showTimeline && <ExecutionTimeline active={visible} mode={timelineMode} onModeChange={onTimelineModeChange} projects={timelineProjects} history={threadBinding.current === binding && selected === thread?.id ? thread : null} historyProject={project} invoke={invoke}/>}
   </div>;
 }

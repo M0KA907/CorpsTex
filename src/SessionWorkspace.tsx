@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ComponentProps } from 'react';
 import { Conversation, type Thread } from './Conversation';
 import './session-workspace.css';
+import { parseTimelineMode, timelineModeKey, type TimelineMode } from './Timeline';
 import { EditorSurface } from './editor/EditorSurface';
 import { FileExplorer } from './editor/FileExplorer';
 import { EditorChrome } from './editor/EditorChrome';
@@ -51,6 +52,21 @@ export function SessionWorkspace(props:Props) {
   const [layout,setLayout]=useState(()=>{try{const raw=typeof window==='undefined'?null:localStorage.getItem(key);const initial=parseSessionLayout(raw);if(!raw){initial.tabs[0].runtime=props.runtime??'codex';initial.tabs[0].root=props.workspaceRoot;}return initial;}catch{const initial=empty();initial.tabs[0].runtime=props.runtime??'codex';initial.tabs[0].root=props.workspaceRoot;return initial;}});
   const [opened,setOpened]=useState<Record<string,number>>({});
   const [notice,setNotice]=useState('');
+  const [timelineMode,setTimelineMode]=useState<TimelineMode>(()=>{
+    try { return parseTimelineMode(typeof window === 'undefined' ? null : localStorage.getItem(timelineModeKey)); }
+    catch { return 'collapsed'; }
+  });
+  function changeTimelineMode(mode:TimelineMode) {
+    setTimelineMode(mode);
+    try { localStorage.setItem(timelineModeKey,mode); }
+    catch { setNotice('Timeline visibility applies now, but could not be saved on this device.'); }
+    // Move focus before the hide/restore control disappears. Do not touch drafts.
+    requestAnimationFrame(()=>{
+      const selector=mode==='hidden'?'.timeline-restore':'.session-focused #timeline-title';
+      host.current?.querySelector<HTMLElement>(selector)?.focus();
+    });
+  }
+
   const [titles,setTitles]=useState<Record<string,string>>({});
   const pending=useRef(new Set<string>());
   const host=useRef<HTMLDivElement>(null);
@@ -118,7 +134,7 @@ export function SessionWorkspace(props:Props) {
         const index=event.key==='Home'?0:event.key==='End'?tabs.length-1:(i+(event.key==='ArrowRight'?1:-1)+tabs.length)%tabs.length;
         tabs[index]?.click();tabs[index]?.focus();
       }}>{layout.tabs.map(tab=><div className="session-tab" key={tab.id}><button type="button" role="tab" id={`session-tab-${tab.id}`} aria-controls={`session-panel-${tab.id}`} aria-selected={!activeFile&&tab.id===layout.active} tabIndex={!activeFile&&tab.id===layout.active?0:-1} title={`${tab.runtime} · ${tab.root} · ${tab.threadId??'No session'}`} disabled={props.exiting} onClick={()=>focus(tab.id)}>{titles[tab.id]||tab.threadId?.slice(0,8)||'New session'}<small>{tab.runtime} · {tab.root.split(/[\\/]/).filter(Boolean).at(-1)||'Choose project'}</small></button><button type="button" className="session-close" title="Close this view; runtime work and approvals continue" aria-label={`Close session ${titles[tab.id]||tab.threadId?.slice(0,8)||'New session'}`} disabled={props.exiting} onClick={()=>close(tab)}>×</button></div>)}{editor.files.map(file=><div className="session-tab file-tab" key={file.id} data-preview={file.preview}><button type="button" role="tab" id={`file-tab-${file.id}`} aria-controls="source-panel" aria-selected={file.id===editor.active} tabIndex={file.id===editor.active?0:-1} title={file.root+'/'+file.path} onClick={()=>setActiveFile(file.id)} onDoubleClick={()=>updateFile(file.id,{preview:false})} onKeyDown={event=>{if(event.key==='Delete'){event.preventDefault();event.stopPropagation();closeFile(file.id);}}}>{dirty(file)?'● ':''}{file.conflict?'⚠ ':''}{file.path.split('/').at(-1)}<small>{file.root.split(/[\\/]/).filter(Boolean).at(-1)} · {file.preview?'Preview':'Source'}</small></button><button type="button" className="session-close" aria-label={`Close file ${file.path}`} disabled={file.saving} onClick={()=>closeFile(file.id)}>×</button></div>)}</div>
-      <div className="session-layout-controls"><button type="button" aria-label="New tab" title="New tab" disabled={props.exiting||layout.tabs.length>=limit} onClick={()=>open(active)}><span aria-hidden="true">+</span></button></div>
+      <div className="session-layout-controls">{timelineMode==='hidden'&&<button type="button" className="timeline-restore" title="Show execution timeline in conversation" onClick={()=>{setActiveFile(null);changeTimelineMode('expanded');}}>Execution timeline</button>}<button type="button" aria-label="New tab" title="New tab" disabled={props.exiting||layout.tabs.length>=limit} onClick={()=>open(active)}><span aria-hidden="true">+</span></button></div>
     </div>
     {activeFile&&<div id="source-panel" className="source-panel" role="tabpanel" aria-labelledby={`file-tab-${activeFile.id}`}><EditorSurface key={activeFile.id} file={activeFile}/><button type="button" className="editor-settings-trigger" onClick={()=>showEditorSettings()}>Editor settings</button></div>}
     {notice&&<p className="session-notice" role="status">{notice}</p>}
@@ -126,7 +142,7 @@ export function SessionWorkspace(props:Props) {
       const focused=tab.id===layout.active;const visible=focused;
       const project=props.workspaceProjects.find(p=>(p.runtime??'codex')===tab.runtime&&p.root===tab.root)??null;
       return <div key={tab.id} id={`session-panel-${tab.id}`} role="tabpanel" aria-labelledby={`session-tab-${tab.id}`} hidden={!visible} className={`session-panel ${focused?'session-focused':''}`} >
-        <Conversation {...props} editorRoot={activeFile?.root??props.workspaceRoot} sidebarToggle={sidebarNavigation} visible={visible&&!activeFile} runtime={tab.runtime} project={project} sessionId={tab.id==='main'?'':tab.id} initialThread={tab.threadId} autoOpen={opened[tab.id]??0} onOpenSession={thread=>open(tab,thread)} onSessionState={(thread,busy)=>{
+        <Conversation {...props} timelineMode={timelineMode} onTimelineModeChange={changeTimelineMode} editorRoot={activeFile?.root??props.workspaceRoot} sidebarToggle={sidebarNavigation} visible={visible&&!activeFile} runtime={tab.runtime} project={project} sessionId={tab.id==='main'?'':tab.id} initialThread={tab.threadId} autoOpen={opened[tab.id]??0} onOpenSession={thread=>open(tab,thread)} onSessionState={(thread,busy)=>{
           if(busy)pending.current.add(tab.id);else pending.current.delete(tab.id);
           if(thread){const title=thread.name||thread.preview?.slice(0,48)||thread.id.slice(0,8);setTitles(old=>old[tab.id]===title?old:{...old,[tab.id]:title});setLayout(old=>old.tabs.some(t=>t.id===tab.id&&t.threadId!==thread.id)?{...old,tabs:old.tabs.map(t=>t.id===tab.id?{...t,threadId:thread.id}:t)}:old);}
         }} showTimeline={focused} onDraftState={undefined} controls={focused&&sidebarView==='conversations'?props.controls:null} runtimeControls={focused?props.runtimeControls:null} settingsOpen={focused&&props.settingsOpen} connect={async()=>{

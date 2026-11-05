@@ -1,6 +1,12 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import './timeline.css';
 
+export type TimelineMode = 'collapsed' | 'expanded' | 'hidden';
+export const timelineModeKey = 'corpstex.timeline.visibility.v1';
+export function parseTimelineMode(value: string | null): TimelineMode {
+  return value === 'expanded' || value === 'hidden' ? value : 'collapsed';
+}
+
 type Runtime = 'codex' | 'opencode';
 export type TimelineProject = { runtime?: Runtime; root: string; generation: number; sequence?: number };
 export type TimelineEvent = {
@@ -105,8 +111,8 @@ export function TimelineView({ sources, history, project, thread, turn }: { sour
   </>;
 }
 
-export const ExecutionTimeline = memo(function ExecutionTimeline({ projects, history, historyProject, invoke }: { projects: TimelineProject[]; history: TimelineHistory | null; historyProject: TimelineProject | null; invoke: Invoke }) {
-  const [open,setOpen] = useState(false);
+export const ExecutionTimeline = memo(function ExecutionTimeline({ projects, history, historyProject, invoke, mode = 'collapsed', onModeChange, active = true }: { active?: boolean; mode?: TimelineMode; onModeChange?: (mode: TimelineMode) => void; projects: TimelineProject[]; history: TimelineHistory | null; historyProject: TimelineProject | null; invoke: Invoke }) {
+  const open = mode === 'expanded';
   const [sources,setSources] = useState<Source[]>([]);
   const [project,setProject] = useState('');
   const [thread,setThread] = useState('');
@@ -115,7 +121,7 @@ export const ExecutionTimeline = memo(function ExecutionTimeline({ projects, his
   const bindings = JSON.stringify(projects.map(timelineKey).sort());
   useEffect(() => {setProject('');setThread('');setTurn('');},[bindings]);
   useEffect(() => {
-    if (!open) { setSources([]); return; }
+    if (!open || !active) { setSources([]); return; }
     let disposed = false, busy = false;
     const previous = new Map<string, { sequence?: number; source: Source }>();
     setSources([]);
@@ -138,14 +144,19 @@ export const ExecutionTimeline = memo(function ExecutionTimeline({ projects, his
     }
     void refresh(); const timer = window.setInterval(() => { void refresh(); },750);
     return () => {disposed = true; window.clearInterval(timer);};
-  },[open,bindings,invoke]);
+  },[open,active,bindings,invoke]);
   const native = useMemo(() => open && historyProject && history ? historyRows(historyProject,history) : [],[open,historyProject?.runtime,historyProject?.root,historyProject?.generation,history]);
   const currentSources = sources.filter(source => projects.some(entry => timelineKey(entry) === timelineKey(source)));
   const rows = [...currentSources.flatMap(source => source.events.map(eventRow)),...native];
   const projectRows = filterTimeline(rows,project,'','');
   const threads = [...new Set(projectRows.map(row => row.thread).filter(Boolean))];
   const turns = [...new Set(filterTimeline(projectRows,'',thread,'').map(row => row.turn).filter(Boolean))];
-  return <section className="timeline" aria-labelledby="timeline-title"><details onToggle={event => setOpen(event.currentTarget.open)}>
+  if (mode === 'hidden') return null;
+  return <section className="timeline" aria-labelledby="timeline-title">
+    <button type="button" className="timeline-hide" onClick={() => onModeChange?.('hidden')}>Hide timeline</button>
+    <details open={open} onToggle={event => {
+      if (event.currentTarget.open !== open) onModeChange?.(event.currentTarget.open ? 'expanded' : 'collapsed');
+    }}>
     <summary id="timeline-title" className="panel-heading">Execution timeline</summary>
     {open ? <div className="timeline-body">
       <div className="timeline-filters">

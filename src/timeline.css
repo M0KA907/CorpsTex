@@ -26,3 +26,8 @@
 .timeline-history > summary { padding:0.625rem 0; }
 .timeline summary:focus-visible,.timeline select:focus-visible,.timeline pre:focus-visible { outline:2px solid var(--color-focus); outline-offset:2px; }
 @media(max-width:480px) { .timeline-body { max-height:48dvh; } .timeline-filters { gap:0.5rem; } .timeline-filters label { flex-basis:100%; } .timeline-detail dl { grid-template-columns:1fr; gap:0.125rem; } .timeline-detail dd { margin-bottom:0.5rem; } }
+
+.timeline { position:relative; }
+.timeline > details > .panel-heading { padding-right:8rem; }
+.timeline-hide { position:absolute; top:.3rem; right:var(--workspace-gutter,1rem); margin:0; padding:.3rem .5rem; font-size:var(--text-xs); background:transparent; color:var(--color-muted); }
+.session-layout-controls .timeline-restore { width:auto; font-size:var(--text-xs); white-space:normal; }
