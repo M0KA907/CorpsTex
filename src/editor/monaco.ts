@@ -3,6 +3,7 @@ import 'monaco-editor/features/register.all';
 import 'monaco-editor/languages/definitions/register.all';
 import EditorWorker from 'monaco-editor/editor/editor.worker?worker';
 import { fileUri, getEditor, invoke, language, message, notice, openFile, type FileTab, type ServerConfig } from './state';
+import { LspNotificationQueue } from './lspQueue';
 
 (globalThis as typeof globalThis & {MonacoEnvironment:unknown}).MonacoEnvironment={getWorker:()=>new EditorWorker()};
 monaco.editor.defineTheme('corpstex',{base:'vs-dark',inherit:true,rules:[{token:'comment',foreground:'98948a'},{token:'keyword',foreground:'e4a68d'},{token:'string',foreground:'bbceaa'}],colors:{'editor.background':'#262624','editor.foreground':'#efede5','editorLineNumber.foreground':'#98948a','editorCursor.foreground':'#e4a68d','editor.selectionBackground':'#70534877','editor.lineHighlightBackground':'#2d2d2a'}});
@@ -24,7 +25,7 @@ monaco.editor.registerEditorOpener({openCodeEditor:async(_source,resource,select
   await openFile(root,path,true,cursor);return true;
 }});
 type Json=Record<string,any>;
-type Running={root:string;config:ServerConfig;cap:Json;queue:Promise<unknown>;disposables:monaco.IDisposable[];models:Map<string,monaco.IDisposable[]>;timer:ReturnType<typeof setInterval>;polling:boolean;status:string};
+type Running={root:string;config:ServerConfig;cap:Json;queue:LspNotificationQueue;disposables:monaco.IDisposable[];models:Map<string,monaco.IDisposable[]>;timer:ReturnType<typeof setInterval>;polling:boolean;status:string};
 export const servers=new Map<string,Running>();
 const key=(root:string,id:string)=>JSON.stringify([root,id]);
 const match=(s:Running,m:monaco.editor.ITextModel)=>m.uri.toString().startsWith(canonicalFileUri(s.root)+'/')&&s.config.language.split(',').map(l=>l.trim()).includes(m.getLanguageId());
@@ -41,17 +42,17 @@ function markdown(contents:unknown):monaco.IMarkdownString[]{
   }
   return [];
 }
-function send(s:Running,method:string,params:unknown){
-  s.queue=s.queue.then(()=>invoke('editor_lsp_notify',{root:s.root,id:s.config.id,method,params})).catch(e=>{s.status=message(e);notice(s.status);});return s.queue;
+function send(s:Running,method:string,params:unknown,fullTextUri?:string){
+  s.queue.enqueue(method,params,fullTextUri);
 }
-async function request(s:Running,method:string,params:unknown){await s.queue;return invoke<any>('editor_lsp_request',{root:s.root,id:s.config.id,method,params});}
+async function request(s:Running,method:string,params:unknown){await s.queue.flush();return invoke<any>('editor_lsp_request',{root:s.root,id:s.config.id,method,params});}
 function attach(s:Running,model:monaco.editor.ITextModel){
   if(!match(s,model)||s.models.has(model.uri.toString())||model.getValueLength()>2*1024*1024||getEditor().files.some(f=>f.large&&canonicalFileUri(f.root,f.path)===model.uri.toString()))return;
   const uri=model.uri.toString();const sync=s.cap.textDocumentSync;const kind=typeof sync==='number'?sync:sync?.change;
   send(s,'textDocument/didOpen',{textDocument:{uri,languageId:model.getLanguageId(),version:model.getVersionId(),text:model.getValue()}});
   const change=model.onDidChangeContent(event=>{
     if(kind===0)return;
-    send(s,'textDocument/didChange',{textDocument:{uri,version:model.getVersionId()},contentChanges:kind===2?event.changes.map(c=>({range:lspRange(c.range),rangeLength:c.rangeLength,text:c.text})):[{text:model.getValue()}]});
+    send(s,'textDocument/didChange',{textDocument:{uri,version:model.getVersionId()},contentChanges:kind===2?event.changes.map(c=>({range:lspRange(c.range),rangeLength:c.rangeLength,text:c.text})):[{text:model.getValue()}]},kind===2?undefined:uri);
   });
   const dispose=model.onWillDispose(()=>{send(s,'textDocument/didClose',{textDocument:{uri}});s.models.delete(uri);change.dispose();});
   s.models.set(uri,[change,dispose]);
@@ -62,7 +63,14 @@ export async function startServer(root:string,config:ServerConfig){
   if(init.capabilities?.positionEncoding && init.capabilities.positionEncoding!=='utf-16'){
     await invoke('editor_lsp_stop',{root,id:config.id});throw {message:'Server selected unsupported position encoding; UTF-16 is required.'};
   }
-  const s:Running={root,config,cap:init.capabilities??{},queue:Promise.resolve(),disposables:[],models:new Map(),timer:0 as unknown as ReturnType<typeof setInterval>,polling:false,status:'Running'};
+  const queue=new LspNotificationQueue(
+    (method,params)=>invoke('editor_lsp_notify',{root,id:config.id,method,params}),
+    error=>{
+      notice(`${config.name}: synchronization stopped. ${error.message} Your buffers are retained; restart the language server in Editor settings.`);
+      queueMicrotask(()=>{if(servers.get(key(root,config.id))===s)void stopServer(root,config.id).catch(e=>notice(message(e)));});
+    },
+  );
+  const s:Running={root,config,cap:init.capabilities??{},queue,disposables:[],models:new Map(),timer:0 as unknown as ReturnType<typeof setInterval>,polling:false,status:'Running'};
   servers.set(key(root,config.id),s);
   const selector=config.language.split(',').map(l=>l.trim());
   if(s.cap.completionProvider)s.disposables.push(monaco.languages.registerCompletionItemProvider(selector,{
@@ -103,9 +111,10 @@ export async function startServer(root:string,config:ServerConfig){
 export async function stopServer(root:string,id:string){
   const s=servers.get(key(root,id));
   if(s){
+    servers.delete(key(root,id));
     clearInterval(s.timer);for(const d of s.disposables)d.dispose();
     for(const [uri,ds] of s.models){send(s,'textDocument/didClose',{textDocument:{uri}});for(const d of ds)d.dispose();const m=monaco.editor.getModel(monaco.Uri.parse(uri));if(m)monaco.editor.setModelMarkers(m,id,[]);}
-    servers.delete(key(root,id));await s.queue;
+    await s.queue.flush().catch(()=>{});
   }
   await invoke('editor_lsp_stop',{root,id});
 }

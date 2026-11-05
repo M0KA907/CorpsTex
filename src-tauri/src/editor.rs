@@ -419,6 +419,99 @@ fn move_no_replace(source: &Path, destination: &Path) -> Result<()> {
         ))
     }
 }
+// Stage into a private sibling directory before checking the bytes to delete.
+// Recreating the original name can no longer redirect the final unlink.
+struct PendingDelete {
+    target: PathBuf,
+    directory: PathBuf,
+    staged: PathBuf,
+    retained_label: String,
+    lease: File,
+}
+impl PendingDelete {
+    fn stage(target: &Path, relative: &str) -> Result<Self> {
+        let name = format!(
+            ".corpstex-save-delete-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        );
+        let directory = target
+            .parent()
+            .ok_or_else(|| error("path", "Cannot delete the project root."))?
+            .join(&name);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            fs::DirBuilder::new()
+                .mode(0o700)
+                .create(&directory)
+                .map_err(io)?;
+        }
+        #[cfg(not(unix))]
+        fs::create_dir(&directory).map_err(io)?;
+        let lease = match open_directory(&directory) {
+            Ok(lease) => lease,
+            Err(e) => {
+                let _ = fs::remove_dir(&directory);
+                return Err(e);
+            }
+        };
+        #[cfg(target_os = "linux")]
+        let staged = {
+            use std::os::fd::AsRawFd;
+            PathBuf::from(format!("/proc/self/fd/{}/file", lease.as_raw_fd()))
+        };
+        #[cfg(not(target_os = "linux"))]
+        let staged = directory.join("file");
+        if let Err(e) = move_no_replace(target, &staged) {
+            drop(lease);
+            let _ = fs::remove_dir(&directory);
+            return Err(e);
+        }
+        let prefix = relative.rsplit_once('/').map(|(p, _)| p).unwrap_or("");
+        Ok(Self {
+            target: target.to_path_buf(),
+            directory,
+            staged,
+            retained_label: if prefix.is_empty() {
+                format!("{name}/file")
+            } else {
+                format!("{prefix}/{name}/file")
+            },
+            lease,
+        })
+    }
+
+    fn finish(self, expected: &str) -> Result<()> {
+        let result = (|| {
+            if revision(&read(&self.staged)?) != expected {
+                return Err(error(
+                    "conflict",
+                    "File changed since deletion was requested.",
+                ));
+            }
+            fs::remove_file(&self.staged).map_err(io)
+        })();
+        if let Err(e) = result {
+            // Never overwrite a file another process created at the original name.
+            if move_no_replace(&self.staged, &self.target).is_err() {
+                return Err(error("deleteRace", &format!(
+                    "Deletion stopped. The original path could not be restored without overwriting another file. Retained content is at {}. Review it manually.",
+                    self.retained_label
+                )));
+            }
+            drop(self.lease);
+            let _ = fs::remove_dir(&self.directory);
+            return Err(e);
+        }
+        drop(self.lease);
+        fs::remove_dir(&self.directory).map_err(io)
+    }
+}
+
 fn replace_checked(temp: &Path, target: &Path, original: &[u8], relative: &str) -> Result<()> {
     #[cfg(target_os = "linux")]
     {
@@ -779,7 +872,11 @@ impl Editor {
                             "File changed since deletion was requested.",
                         ));
                     }
-                    fs::remove_file(&target.path).map_err(io)?;
+                    PendingDelete::stage(&target.path, &path)?.finish(
+                        expected.as_deref().ok_or_else(|| {
+                            error("conflict", "Inspect the file before deleting it.")
+                        })?,
+                    )?;
                 }
                 Ok(serde_json::Value::Null)
             }
@@ -1033,6 +1130,39 @@ mod tests {
             })
             .unwrap();
         assert_eq!(fs::read(retained.path()).unwrap(), b"external");
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[cfg(any(target_os = "linux", windows))]
+    #[test]
+    fn deletion_validates_staged_bytes_and_never_unlinks_a_recreated_path() {
+        let (_e, root) = fixture();
+        let path = Path::new(&root).join("race");
+        fs::write(&path, b"reviewed").unwrap();
+        let pending = PendingDelete::stage(&path, "race").unwrap();
+        // A replacement after staging must survive even a successful deletion.
+        fs::write(&path, b"replacement").unwrap();
+        pending.finish(&revision(b"reviewed")).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"replacement");
+
+        // A replacement between the initial check and staging is restored.
+        let pending = PendingDelete::stage(&path, "race").unwrap();
+        assert_eq!(
+            pending.finish(&revision(b"reviewed")).unwrap_err().kind,
+            "conflict"
+        );
+        assert_eq!(fs::read(&path).unwrap(), b"replacement");
+
+        let pending = PendingDelete::stage(&path, "race").unwrap();
+        let retained = Path::new(&root).join(&pending.retained_label);
+        let label = pending.retained_label.clone();
+        // An open writer can change the staged inode before validation.
+        fs::write(&retained, b"changed").unwrap();
+        fs::write(&path, b"new occupant").unwrap();
+        let error = pending.finish(&revision(b"replacement")).unwrap_err();
+        assert_eq!(error.kind, "deleteRace");
+        assert!(error.message.contains(&label));
+        assert_eq!(fs::read(&retained).unwrap(), b"changed");
+        assert_eq!(fs::read(&path).unwrap(), b"new occupant");
         fs::remove_dir_all(root).unwrap();
     }
     #[cfg(target_os = "linux")]

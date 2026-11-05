@@ -61,7 +61,11 @@ export const dirty=(f:FileTab)=>f.text!==f.disk.text;
 export const fs=<T,>(root:string,action:Record<string,unknown>)=>invoke<T>('editor_request',{root,action});
 const roots=new Map<string,Promise<string>>();
 export async function authorize(root:string):Promise<string>{let result=roots.get(root);if(!result){result=fs<{root:string}>(root,{type:'authorize'}).then(v=>v.root).catch(e=>{roots.delete(root);throw e;});roots.set(root,result);}return result;}
-export function updateFile(id:string,update:Partial<FileTab>){emit({files:snapshot.files.map(f=>f.id===id?{...f,...update}:f)});}
+const syncing=new Map<string,symbol>();
+export function updateFile(id:string,update:Partial<FileTab>){
+  if('disk' in update || 'conflict' in update || update.saving===true)syncing.delete(id);
+  emit({files:snapshot.files.map(f=>f.id===id?{...f,...update}:f)});
+}
 export function setActiveFile(id:string|null){emit({active:id});}
 export function notice(text:string){emit({notice:text});}
 export function showEditorSettings(open=true){emit({settingsOpen:open});}
@@ -71,15 +75,16 @@ export async function openFile(root:string,path:string,permanent=false,cursor?:F
   root=await authorize(root);
   const existing=snapshot.files.find(f=>fileUri(f.root,f.path)===fileUri(root,path));
   if(existing){updateFile(existing.id,{preview:permanent?false:existing.preview,...(cursor?{cursor}:{})});setActiveFile(existing.id);return;}
-  const key=JSON.stringify([root,path]);if(opening.has(key))return opening.get(key);
+  const key=fileUri(root,path);if(opening.has(key))return opening.get(key);
+  if(snapshot.files.length+opening.size>=32){notice('Close a file tab before opening another (32 maximum, including pending opens).');return;}
   const task=(async()=>{
     try{
-      if(snapshot.files.length>=32)throw {message:'Close a file tab before opening another (32 maximum).'};
       let disk:Disk;let large=false;
       try{disk=await fs<Disk>(root,{type:'read',path,large:false});}catch(e){if((e as {kind?:string})?.kind!=='largeFile')throw e;if(!window.confirm('Open this large file? Files up to 32 MiB use reduced features; LSP and minimap will be disabled.'))return;large=true;disk=await fs<Disk>(root,{type:'read',path,large:true});}
       if(snapshot.files.reduce((sum,f)=>sum+f.disk.bytes,0)+disk.bytes>64*1024*1024)throw {message:'Open files exceed the 64 MiB file budget. Close files before opening another.'};
       const preview=!permanent&&resolveOptions(snapshot.settings,root).preview;
       const files=snapshot.files.filter(f=>!(preview&&f.preview&&!dirty(f)&&!f.conflict&&!f.saving));
+      if(files.length>=32)throw {message:'Close a file tab before opening another (32 maximum).'};
       const file:FileTab={id:crypto.randomUUID(),root,path,disk,text:disk.text,preview,large,cursor};
       emit({files:[...files,file],active:file.id,notice:''});
     }catch(e){notice(message(e));}finally{opening.delete(key);}
@@ -88,9 +93,10 @@ export async function openFile(root:string,path:string,permanent=false,cursor?:F
 export function closeFile(id:string):boolean{
   const f=snapshot.files.find(f=>f.id===id);if(!f || f.saving)return false;
   if((dirty(f)||f.conflict)&&!window.confirm(`Discard unsaved changes to ${f.path}? There is no crash recovery storage.`))return false;
+  syncing.delete(id);
   const files=snapshot.files.filter(f=>f.id!==id);emit({files,active:snapshot.active===id?files.at(-1)?.id??null:snapshot.active});return true;
 }
-export function discardFile(id:string){const files=snapshot.files.filter(f=>f.id!==id);emit({files,active:snapshot.active===id?files.at(-1)?.id??null:snapshot.active});}
+export function discardFile(id:string){syncing.delete(id);const files=snapshot.files.filter(f=>f.id!==id);emit({files,active:snapshot.active===id?files.at(-1)?.id??null:snapshot.active});}
 export async function saveFile(id:string){
   const file=snapshot.files.find(f=>f.id===id);if(!file || file.saving)return;
   if(file.conflict||file.missing){notice('Resolve the disk conflict before saving.');return;}
@@ -104,12 +110,14 @@ export async function saveFile(id:string){
 }
 export async function syncFile(id:string){
   const file=snapshot.files.find(f=>f.id===id);if(!file || file.saving)return;
+  const token=Symbol();syncing.set(id,token);
   try{
     const disk=await fs<Disk|null>(file.root,{type:'poll',path:file.path,expected:file.conflict?.revision??file.disk.revision});
-    const current=snapshot.files.find(f=>f.id===id);if(!current||current.saving)return;
+    const current=snapshot.files.find(f=>f.id===id);if(!current||current.saving||syncing.get(id)!==token)return;
     if(disk){if(dirty(current))updateFile(id,{conflict:disk,missing:undefined});else updateFile(id,{disk,text:disk.text,conflict:undefined,missing:undefined});}
     else if(current.missing)updateFile(id,{missing:undefined});
-  }catch(e){const current=snapshot.files.find(f=>f.id===id);const missing=message(e);if(current&&current.missing!==missing)updateFile(id,{missing});}
+  }catch(e){const current=snapshot.files.find(f=>f.id===id);const missing=message(e);if(current&&syncing.get(id)===token&&current.missing!==missing)updateFile(id,{missing});}
+  finally{if(syncing.get(id)===token)syncing.delete(id);}
 }
 export function acceptDisk(id:string){const f=snapshot.files.find(f=>f.id===id);if(f?.conflict && window.confirm('Discard your buffer and load the current disk version?'))updateFile(id,{disk:f.conflict,text:f.conflict.text,conflict:undefined});}
 export function acceptMerge(id:string){const f=snapshot.files.find(f=>f.id===id);if(f?.conflict && window.confirm('Use your edited buffer as the merge result? Ctrl+S will replace the disk version shown in the diff.'))updateFile(id,{disk:f.conflict,conflict:undefined,preview:false});}

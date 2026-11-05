@@ -305,3 +305,4 @@ export { RuntimeFields, RuntimeItemDetails, runtimeDetailData, TurnActivity } fr
 export { McpStatusView } from './McpStatus';
 
 export { groupThreads, threadTime, ConversationLibrary } from './ConversationLibrary';
+export { LspNotificationQueue } from './editor/lspQueue';
