@@ -35,7 +35,10 @@ fieldset { margin: 12px 0; border: 1px solid #80756b; } label { display: block; 
 
 .inline-queue { padding: 20px; border: 1px solid #d5b67b; border-radius: 12px; background: #242424; color: #ebdbb2; box-shadow: 0 0 24px #d5b67b14; }
 .inline-queue h2 { margin-top: 8px; }
-.inline-queue article { padding-top: 16px; }
+.inline-queue article { padding: 6px; max-height: var(--approval-viewport); overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.inline-queue article > h2 { position: sticky; top: 0; z-index: 1; background: #242424; margin: 0; padding: 4px 0; }
+.inline-queue .actions:not(:empty), .inline-queue .send-answers { position: sticky; bottom: 0; background: #242424; padding: 12px 0; z-index: 1; }
+.inline-queue .actions { flex-direction: row; gap: 8px; }
 .inline-queue dl { font-size: 12px; }
 @media (max-width: 500px) { .inline-queue { padding: 14px; } }
 

@@ -121,7 +121,7 @@ export function ApprovalCenter({ approvals, exiting, invoke, errorText, busyKeys
   }, [exiting]);
   return <>
     {!shadow && <button type="button" disabled>Approvals · {approvals.length}</button>}
-    <div ref={host} />
+    <div ref={host} data-approval-controls />
     {shadow && createPortal(<><link rel="stylesheet" href={stylesheet} />
       <button className="launcher" data-pending={approvals.some(a => a.status === 'ready') && !exiting} type="button" aria-keyshortcuts="Control+A" aria-expanded={open && !exiting} title="Approval center (Ctrl+A)" disabled={exiting} onClick={() => setOpen(true)}>Approvals · {approvals.length}</button>
       <span className="sr-only" role="status">{approvals.filter(a => a.status === 'ready').length} requests awaiting review across all projects</span>
@@ -135,20 +135,53 @@ export function matchingApprovals(approvals: Approval[], project: {runtime?:'cod
   if (!project || !thread) return [];
   return approvals.filter(a=>(a.runtime??'codex')===(project.runtime??'codex') && a.root===project.root && a.generation===project.generation && (a.request.params.threadId ?? a.request.params.conversationId ?? a.request.params.sessionId)===thread);
 }
-export function InlineApprovals({approvals,exiting,busyKeys,invoke,errorText}: {approvals:Approval[];exiting:boolean;busyKeys:Set<string>;invoke:Invoke;errorText:(error:unknown)=>string}) {
+export function InlineApprovals({approvals,exiting,busyKeys,invoke,errorText,visible,onReveal}: {approvals:Approval[];exiting:boolean;busyKeys:Set<string>;invoke:Invoke;errorText:(error:unknown)=>string;visible:boolean;onReveal:()=>void}) {
   const host=useRef<HTMLDivElement>(null);
   const root=useRef<ShadowRoot | null>(null);
   const [shadow,setShadow]=useState<ShadowRoot | null>(null);
   const [feedback,setFeedback]=useState('');
+  const [styled,setStyled]=useState(false);
+  const seen=useRef(new Set<string>());
+  const keys=JSON.stringify(approvals.map(identity));
+  const reveal=useRef(onReveal);
+  reveal.current=onReveal;
   useEffect(()=>{if(host.current){root.current??=host.current.attachShadow({mode:'closed'});setShadow(root.current);}},[]);
+  useEffect(()=>{
+    const viewport=host.current?.closest<HTMLElement>('.messages');
+    if(!viewport||!shadow)return;
+    const size=()=>host.current?.style.setProperty('--approval-viewport',`${Math.max(1,viewport.clientHeight-24)}px`);
+    size();
+    const observer=new ResizeObserver(size);observer.observe(viewport);
+    return ()=>observer.disconnect();
+  },[shadow]);
+  useEffect(()=>{
+    if(!shadow||!styled)return;
+    const current=JSON.parse(keys) as string[];
+    const fresh=current.filter(key=>!seen.current.has(key));
+    // Retain only outstanding identities; hidden tabs consume arrivals without
+    // navigating or jumping later when the owner returns to them.
+    seen.current=new Set(current);
+    if(!visible||exiting||!fresh.length)return;
+    const viewport=host.current?.closest<HTMLElement>('.messages');
+    const card=shadow.querySelectorAll<HTMLElement>('article')[current.indexOf(fresh.at(-1)!)];
+    if(!viewport||!card)return;
+    reveal.current();
+    // Scroll only this transcript, never the page or another session. Instant
+    // positioning also respects reduced motion and cancels an ongoing follow.
+    const frame=requestAnimationFrame(()=>{
+      host.current?.style.setProperty('--approval-viewport',`${Math.max(1,viewport.clientHeight-24)}px`);
+      viewport.scrollTo({top:viewport.scrollTop+card.getBoundingClientRect().top-viewport.getBoundingClientRect().top-12,behavior:'instant'});
+    });
+    return ()=>cancelAnimationFrame(frame);
+  },[keys,shadow,styled,visible,exiting]);
   async function reply(approval:Approval,decision:Decision) {
     if(exiting||busyKeys.has(identity(approval)))return;
     setFeedback('');
     try {await invoke('approval_reply',{runtime:approval.runtime,root:approval.root,generation:approval.generation,reply:{key:approval.key,ticket:approval.ticket,decision}});setFeedback('Response sent to the originating runtime.');}
     catch(error){setFeedback(errorText(error));}
   }
-  return <div className="inline-approvals" ref={host}>
+  return <div className="inline-approvals" ref={host} hidden={!approvals.length}>
     {!shadow&&<p>Approval requested. Open the Approval center to respond.</p>}
-    {shadow&&createPortal(<><link rel="stylesheet" href={stylesheet}/><section className="inline-queue" aria-label="Approvals for this conversation"><p className="eyebrow">CORPSTEX · TRUSTED CONTROLS</p><h2>Your response is needed</h2><p>These requests are also available in the Approval center.</p>{approvals.map(a=><ApprovalCard key={identity(a)} approval={a} busy={exiting||busyKeys.has(identity(a))} onReply={decision=>void reply(a,decision)}/>)}{feedback&&<p role="status">{feedback}</p>}</section></>,shadow)}
+    {shadow&&createPortal(<><link rel="stylesheet" href={stylesheet} onLoad={()=>setStyled(true)}/><section className="inline-queue" aria-label="Approvals for this conversation"><p className="eyebrow">CORPSTEX · TRUSTED CONTROLS</p><h2>Your response is needed</h2><p>These requests are also available in the Approval center.</p>{approvals.map(a=><ApprovalCard key={identity(a)} approval={a} busy={exiting||busyKeys.has(identity(a))} onReply={decision=>void reply(a,decision)}/>)}{feedback&&<p role="status">{feedback}</p>}</section></>,shadow)}
   </div>;
 }

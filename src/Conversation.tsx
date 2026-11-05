@@ -8,7 +8,7 @@ import { ModelPicker, recommendedFreeModels } from './ModelPicker';
 import { Settings, RuntimeSettings, OpenCodeProviderSettings } from './Settings';
 import { parseModelChoice, type Preferences } from './preferences';
 import { InlineApprovals, matchingApprovals, type Approval } from './Approvals';
-import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { RichContent } from './RichContent';
 import { ImageLoader, MessageImage, type ImageAttachment } from './Media';
 import { ExecutionTimeline, type TimelineProject } from './Timeline';
@@ -87,13 +87,13 @@ export function shouldSendMessage(event: {key: string; shiftKey: boolean; altKey
 }
 
 // Draft edits and project polling must not rebuild a long transcript.
-export const ThreadTranscript = memo(function ThreadTranscript({ turns, runtime = 'codex' }: { turns: Turn[]; runtime?:string }) {
+export const ThreadTranscript = memo(function ThreadTranscript({ turns, runtime = 'codex', completedTurn = null }: { turns: Turn[]; runtime?:string; completedTurn?:string|null }) {
   return <>{turns.map(turn => {
     const streamingId = turn.status === 'inProgress' ? [...(turn.items ?? [])].reverse().find(item => item.type === 'agentMessage')?.id : undefined;
-    return <section className="turn" key={turn.id} aria-label={`Turn ${turn.status}`}>
+    return <section className="turn" data-completed={turn.id===completedTurn || undefined} key={turn.id} aria-label={`Turn ${turn.status}`}>
     <TurnActivity turn={turn}/>
     {(turn.items ?? []).map(item => <ChatMessage key={item.id} item={item} streaming={item.id === streamingId} runtime={runtime}/>)}
-    <p className="turn-state" role="status">{turn.status}{turn.error?.message ? ` · ${turn.error.message}` : ''}</p>
+    <p className="turn-state" role="status">{turn.status}{turn.error?.message ? ` · ${turn.error.message}` : ''}{turn.id===completedTurn&&<span className="turn-complete-cue" aria-hidden="true">✓</span>}</p>
   </section>;
   })}</>;
 });
@@ -137,8 +137,13 @@ export function Conversation({ sidebarToggle, runtime = 'codex', runtimeControls
   const current = useRef(binding); current.current = binding;
   const opened = useRef<Thread[]>([]);
   const messageEnd = useRef<HTMLDivElement>(null);
-  const autoScrolling = useRef(false);
+  const transcript = useRef<HTMLDivElement>(null);
+  const following = useRef(true);
+  const interrupting = useRef(false);
   const [follow, setFollow] = useState(true);
+  function setFollowing(value:boolean) { following.current=value;setFollow(value); }
+  const liveTurn = useRef<{scope:string;id:string}|null>(null);
+  const [completedTurn,setCompletedTurn] = useState<string|null>(null);
   const ready = project?.status === 'ready';
   const turns = thread?.turns ?? [];
   const active = [...turns].reverse().find(turn => turn.status === 'inProgress');
@@ -211,13 +216,53 @@ export function Conversation({ sidebarToggle, runtime = 'codex', runtimeControls
     void refresh(); const timer = window.setInterval(() => {void refresh();},200);
     return () => {disposed = true;window.clearInterval(timer);};
   }, [binding, selected, invoke, errorText, visible]);
-  useEffect(() => {
+  const approvalPending=useRef(false);
+  approvalPending.current=matchingApprovals(approvals,project,selected).length>0;
+  useLayoutEffect(() => {
     const node = messageEnd.current?.parentElement;
-    if (!follow || !node) return;
-    const reduced = preferences.motion === 'reduced' || window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    const frame = requestAnimationFrame(()=>{ if(node.scrollHeight-node.scrollTop-node.clientHeight<2)return; autoScrolling.current=true; node.scrollTo({top:node.scrollHeight,behavior:reduced?'instant':'smooth'}); });
-    return ()=>cancelAnimationFrame(frame);
-  }, [thread, follow, preferences.motion]);
+    if (!visible || !follow || !node || approvalPending.current) return;
+    let frame:number|null=null;
+    function schedule() {
+      if(frame!==null)return;
+      frame=requestAnimationFrame(()=>{
+        frame=null;
+        if(!following.current || approvalPending.current)return;
+        if(node!.scrollHeight-node!.scrollTop-node!.clientHeight>=2) {
+          node!.scrollTo({top:node!.scrollHeight,behavior:'instant'});
+        }
+      });
+    }
+    // Track actual layout too (images, expanded details, composer/window resize).
+    // Snapshot updates must not restart browser smooth-scroll animations.
+    const observer=new ResizeObserver(schedule);
+    observer.observe(node);
+    if(transcript.current)observer.observe(transcript.current);
+    schedule();
+    return ()=>{observer.disconnect();if(frame!==null)cancelAnimationFrame(frame);};
+  }, [thread, follow, visible]);
+  const lastTurn = turns[turns.length - 1];
+  useEffect(()=>{
+    const scope=JSON.stringify([binding,selected]);
+    const previous=liveTurn.current;
+    liveTurn.current=visible&&ready&&lastTurn?.status==='inProgress'?{scope,id:lastTurn.id}:null;
+    if(!visible||!ready||previous?.scope!==scope){setCompletedTurn(null);return;}
+    if(previous && previous.id===lastTurn?.id && lastTurn.status==='completed' && !lastTurn.error) {
+      const reduced=preferences.motion==='reduced'||window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      setCompletedTurn(reduced?null:lastTurn.id);
+    }
+  },[binding,selected,visible,ready,lastTurn?.id,lastTurn?.status,lastTurn?.error,preferences.motion]);
+  useEffect(()=>{
+    if(!completedTurn)return;
+    // End on the actual animation, rather than expiring before a busy WebView
+    // has painted it. Hidden documents and motion changes consume the cue.
+    const media=window.matchMedia('(prefers-reduced-motion: reduce)');
+    const clear=()=>setCompletedTurn(null);
+    const hidden=()=>{if(document.hidden)clear();};
+    media.addEventListener('change',clear);
+    document.addEventListener('visibilitychange',hidden);
+    hidden();
+    return ()=>{media.removeEventListener('change',clear);document.removeEventListener('visibilitychange',hidden);};
+  },[completedTurn]);
   useEffect(() => {
     if (wantNew && project?.status === 'failed') {setWantNew(false);setError(`${runtimeName} could not start. Open Project folder to review the connection error and reconnect.`);}
   }, [wantNew, project?.status]);
@@ -228,7 +273,6 @@ export function Conversation({ sidebarToggle, runtime = 'codex', runtimeControls
   useEffect(()=>onSessionState?.(thread,sessionPending),[thread,sessionPending]);
   const attempted = useRef(0);
   useEffect(()=>{if(ready && autoOpen && attempted.current!==autoOpen){attempted.current=autoOpen;if(initialThread && selected===initialThread)return;void open(initialThread?{id:initialThread}:undefined,true);}},[ready,binding,autoOpen]);
-  const lastTurn = turns[turns.length - 1];
   useEffect(() => {
     if (ready && lastTurn && lastTurn.status !== 'inProgress') {void list();}
   }, [ready, lastTurn?.id, lastTurn?.status]);
@@ -250,7 +294,7 @@ export function Conversation({ sidebarToggle, runtime = 'codex', runtimeControls
       if (current.current !== key) return;
       opened.current = [result.thread,...opened.current.filter(entry => entry.id !== result.thread.id)];
       if(runtime==='opencode')void loadModels(result.thread.id);
-      setSelected(result.thread.id);setThread(result.thread);setAttachedSkills([]);setImages([]);setDraft('');setDraftTurn(undefined);setDelivery('');setHistoryCursor(null);setFollow(true);
+      setSelected(result.thread.id);setThread(result.thread);setAttachedSkills([]);setImages([]);setDraft('');setDraftTurn(undefined);setDelivery('');setHistoryCursor(null);setFollowing(true);
       setThreads(previous => [result.thread,...previous.filter(entry => entry.id !== result.thread.id)]);
       if (existing) {
         const history = await request<Page<Turn>>({type:'history',threadId:result.thread.id,cursor:null});
@@ -280,10 +324,28 @@ export function Conversation({ sidebarToggle, runtime = 'codex', runtimeControls
     finally{submitting.current=false;if(current.current===key)setBusy(false);}
   }
   async function interrupt() {
-    if(!selected || !active)return;
-    try{await request({type:'interrupt',threadId:selected,turnId:active.id});}
-    catch(error){setError(errorText(error));}
+    if(!selected || !active || !ready || exiting || interrupting.current)return;
+    const key=binding;const threadId=selected;
+    interrupting.current=true;
+    try{await request({type:'interrupt',threadId,turnId:active.id});}
+    catch(error){if(current.current===key)setError(errorText(error));}
+    finally{interrupting.current=false;}
   }
+  useEffect(()=>{
+    if(!visible||settingsOpen||exiting||!ready||busy||!active)return;
+    function stopShortcut(event:KeyboardEvent) {
+      if(!['Escape','Esc'].includes(event.key)||event.defaultPrevented||event.repeat||event.isComposing||event.altKey||event.ctrlKey||event.metaKey||event.shiftKey)return;
+      // Capture before textarea/WebView handlers consume Escape. Dismissible
+      // surfaces retain it, including trusted controls behind closed shadow DOM.
+      if(document.querySelector('dialog[open],[data-menu-open],[aria-modal="true"],.project-picker:not([hidden])')||container.current?.querySelector('.composer-picker'))return;
+      if(event.composedPath().some(node=>node instanceof Element&&node.matches('.inline-approvals,[data-approval-controls],.thread-search,[contenteditable="true"]')))return;
+      event.preventDefault();
+      event.stopPropagation();
+      void interrupt();
+    }
+    window.addEventListener('keydown',stopShortcut,true);
+    return ()=>window.removeEventListener('keydown',stopShortcut,true);
+  },[visible,settingsOpen,exiting,ready,busy,active?.id,binding,selected]);
   async function older() {
     if (!selected || !historyCursor)return;
     try{const page=await request<Page<Turn>>({type:'history',threadId:selected,cursor:historyCursor});setHistoryCursor(page.nextCursor ?? null);}
@@ -367,7 +429,7 @@ export function Conversation({ sidebarToggle, runtime = 'codex', runtimeControls
   const moreLibraryThreads=useCallback(()=>{void libraryActions.current.list(true);},[]);
 
   const loadImage=useMemo(()=>(path:string)=>invoke<string>('conversation_image',{runtime,root:project?.root,generation:project?.generation,threadId:selected,path}),[binding,selected,invoke]);
-  return <div className="session-content" ref={container}>
+  return <div className="session-content" ref={container} onAnimationEnd={event=>{if(event.animationName==='turn-complete')setCompletedTurn(null);}}>
     {settingsOpen && <Settings editorRoot={editorRoot||project?.root||''} tools={<McpStatus runtime={runtime} project={project} threadId={selected} invoke={invoke} errorText={errorText}/>} providers={<OpenCodeProviderSettings project={runtime==='opencode'?project:null} invoke={invoke} errorText={errorText}/>} onClose={onCloseSettings} preferences={preferences} onPreferences={onPreferences} storageError={storageError} modelControls={<>{modelControls}<button type="button" disabled={!ready} onClick={()=>void loadModels()}>Refresh models</button>{catalogError&&<p role="alert">{catalogError}</p>}</>} runtime={<RuntimeSettings runtime={runtime} project={project} invoke={invoke} errorText={errorText}/>} />}
     <aside className="projects" aria-labelledby={ids('projects-title')}>
       <div className="sidebar-header">{controls}{sidebarToggle}</div>
@@ -378,16 +440,16 @@ export function Conversation({ sidebarToggle, runtime = 'codex', runtimeControls
       {runtime==='codex'&&<details className="library-sources"><summary>History sources</summary><label className="history-filter">History<select aria-label="Conversation history view" value={historyMode} disabled={busy} onChange={event=>{setArchivedList(event.target.value==='archived');setAllSources(event.target.value==='all');setThreads([]);setCursor(null);}}><option value="active">Interactive</option><option value="all">All sources · includes subagents</option><option value="archived">Archived · all sources</option></select></label></details>}
 
     </aside>
-    <main id={ids('workspace')} className="workspace" data-working={Boolean(active)} tabIndex={-1} aria-labelledby={ids('workspace-title')}>
+    <main id={ids('workspace')} className="workspace" data-working={Boolean(active)} data-approval-pending={inlineApprovals.length>0} tabIndex={-1} aria-labelledby={ids('workspace-title')}>
       <div className="workspace-atmosphere" aria-hidden="true"><i className="matrix-red"/><i className="matrix-green"/><i className="matrix-blue"/><span className="graphite-frost"/></div>
       <div className="workspace-heading"><h1 id={ids('workspace-title')}>{thread?.name || thread?.preview?.slice(0,60) || 'Conversation'}</h1>{runtime==='codex'&&thread&&<ThreadControls key={`${binding}:${thread.id}`} threadId={thread.id} name={thread.name} archived={thread.clientArchived} disabled={!ready||busy||Boolean(active)||exiting} archiveBlocked={Boolean(project?.activeTurns||project?.pendingRequests||project?.uncertain)} onAction={threadAction}/>}<span className="eyebrow">{!ready ? 'DISCONNECTED' : active ? 'WORKING' : thread?.clientArchived?'ARCHIVED':selected ? 'READY' : 'NO SESSION'}</span></div>
       {(thread?.parentThreadId||thread?.forkedFromId)&&<p className="panel-note">{thread.parentThreadId?`Parent agent: ${thread.parentThreadId}`:`Forked from: ${thread.forkedFromId}`}{thread.agentNickname?` · ${thread.agentNickname}`:''}{thread.agentRole?` · ${thread.agentRole}`:''}</p>}
       {runtime==='opencode' ? <aside className="usage-rail" aria-label="OpenCode usage">Usage and pricing are not reported by ACP. “Free” identifies catalog labels.</aside> : <UsageRail project={project} threadId={selected} tokenUsage={thread?.tokenUsage} turnState={`${turns.at(-1)?.id}:${turns.at(-1)?.status}`} invoke={invoke}/>}
-      {!thread ? <div className="welcome"><div className="welcome-content"><h2>No conversation is open.</h2><p>Pick up a recent conversation, or start a new one to begin working with {runtimeName}.</p><button className="welcome-action" type="button" disabled={busy || wantNew} onClick={()=>ready ? void open() : void connect()}>{ready ? 'New conversation' : 'Open project'}</button>{initialThread && !selected && <button type="button" disabled={!ready||busy||exiting} onClick={()=>void open({id:initialThread},true)}>Resume saved session</button>}{!ready && <button type="button" disabled={busy || wantNew} onClick={onChooseProject}>Choose another folder…</button>}</div></div> : <div className="chat-stage"><div className="messages" onWheel={event=>{if(event.deltaY<0){autoScrolling.current=false;setFollow(false);}}} onPointerDown={()=>{autoScrolling.current=false;}} onScroll={event=>{const node=event.currentTarget;const distance=node.scrollHeight-node.scrollTop-node.clientHeight;if(autoScrolling.current){if(distance<2)autoScrolling.current=false;return;}setFollow(distance<90);}}>
+      {!thread ? <div className="welcome"><div className="welcome-content"><h2>No conversation is open.</h2><p>Pick up a recent conversation, or start a new one to begin working with {runtimeName}.</p><button className="welcome-action" type="button" disabled={busy || wantNew} onClick={()=>ready ? void open() : void connect()}>{ready ? 'New conversation' : 'Open project'}</button>{initialThread && !selected && <button type="button" disabled={!ready||busy||exiting} onClick={()=>void open({id:initialThread},true)}>Resume saved session</button>}{!ready && <button type="button" disabled={busy || wantNew} onClick={onChooseProject}>Choose another folder…</button>}</div></div> : <div className="chat-stage"><div className="messages" role="region" tabIndex={0} aria-label="Conversation messages" onWheel={event=>{if(event.deltaY<0)setFollowing(false);else if(event.deltaY>0){const node=event.currentTarget;setFollowing(node.scrollHeight-node.scrollTop-node.clientHeight<2);}}} onTouchStart={()=>setFollowing(false)} onPointerDown={()=>setFollowing(false)} onKeyDown={event=>{if(event.target===event.currentTarget&&['ArrowUp','PageUp','Home','ArrowDown','PageDown','End',' '].includes(event.key))setFollowing(event.key==='End');}} onScroll={event=>{const node=event.currentTarget;if(following.current)return;setFollowing(node.scrollHeight-node.scrollTop-node.clientHeight<2);}}>
         {historyCursor && <button type="button" onClick={() => {void older();}}>Load older turns</button>}
         {turns.length===0 && <p className="conversation-empty">No messages yet.</p>}
-        <ImageLoader.Provider value={loadImage}><ThreadTranscript turns={turns} runtime={runtime}/></ImageLoader.Provider>
-        {inlineApprovals.length>0 && <InlineApprovals approvals={inlineApprovals} exiting={exiting} busyKeys={approvalBusy} invoke={approvalInvoke} errorText={errorText} />}
+        <div ref={transcript}><ImageLoader.Provider value={loadImage}><ThreadTranscript turns={turns} runtime={runtime} completedTurn={completedTurn}/></ImageLoader.Provider></div>
+        <InlineApprovals key={`${binding}:${selected}`} approvals={inlineApprovals} exiting={exiting} busyKeys={approvalBusy} invoke={approvalInvoke} errorText={errorText} visible={visible} onReveal={()=>setFollowing(false)} />
 
         <div ref={messageEnd}/>
       </div></div>}
@@ -399,7 +461,7 @@ export function Conversation({ sidebarToggle, runtime = 'codex', runtimeControls
         {Boolean(project?.pendingRequests) && <p role="alert">Response needed in the Approval center.</p>}
         <form onSubmit={event=>{event.preventDefault();void send();}}>
 
-          <div className="composer-heading"><label htmlFor={ids('message')}>Message</label>{selected && <p className="message-destination" id={ids('message-destination')}><span>{targetTurn ? 'Steering' : 'Sending to'} · {thread?.name || selected.slice(0,8)}</span><span>{project?.root}{targetTurn ? ` · Turn ${targetTurn.slice(0,8)}` : ''}</span></p>}</div><ComposerInput idPrefix={sessionId} key={`${binding}:${selected}`} value={draft} onChange={changeDraft} onSend={()=>void send()} onCommand={composerCommand} skills={attachedSkills} onSkills={setAttachedSkills} images={images} onImages={changeImages} onReading={setReadingImages} project={project} disabled={Boolean(thread?.clientArchived)||!selected||!ready||busy||(runtime==='opencode'&&Boolean(active))} invoke={invoke} errorText={errorText} selected={Boolean(selected)} trailing={modelControls} dockActions={<div className="composer-dock-actions">{staleTarget && !active && <button type="button" onClick={()=>setDraftTurn(null)}>Use as new message</button>}{active && <button type="button" className="stop-turn" title="Stop current turn" disabled={!ready || busy} onClick={()=>{void interrupt();}}>Stop turn</button>}<button type="submit" title={targetTurn?'Steer turn (Shift+Enter)':'Send message (Shift+Enter)'} disabled={Boolean(thread?.clientArchived) || !selected || !ready || busy || readingImages || (!draft.trim() && !images.length) || staleTarget || Boolean(!targetTurn && active)}>{busy ? 'Sending…' : targetTurn ? 'Steer turn' : 'Send message'}</button></div>}/>
+          <div className="composer-heading"><label htmlFor={ids('message')}>Message</label>{selected && <p className="message-destination" id={ids('message-destination')}><span>{targetTurn ? 'Steering' : 'Sending to'} · {thread?.name || selected.slice(0,8)}</span><span>{project?.root}{targetTurn ? ` · Turn ${targetTurn.slice(0,8)}` : ''}</span></p>}</div><ComposerInput idPrefix={sessionId} key={`${binding}:${selected}`} value={draft} onChange={changeDraft} onSend={()=>void send()} onCommand={composerCommand} skills={attachedSkills} onSkills={setAttachedSkills} images={images} onImages={changeImages} onReading={setReadingImages} project={project} disabled={Boolean(thread?.clientArchived)||!selected||!ready||busy||(runtime==='opencode'&&Boolean(active))} invoke={invoke} errorText={errorText} selected={Boolean(selected)} trailing={modelControls} dockActions={<div className="composer-dock-actions">{staleTarget && !active && <button type="button" onClick={()=>setDraftTurn(null)}>Use as new message</button>}{active && <button type="button" className="stop-turn" title="Stop current turn (Escape)" aria-keyshortcuts="Escape" disabled={!ready || busy} onClick={()=>{void interrupt();}}>Stop turn</button>}<button type="submit" title={targetTurn?'Steer turn (Shift+Enter)':'Send message (Shift+Enter)'} disabled={Boolean(thread?.clientArchived) || !selected || !ready || busy || readingImages || (!draft.trim() && !images.length) || staleTarget || Boolean(!targetTurn && active)}>{busy ? 'Sending…' : targetTurn ? 'Steer turn' : 'Send message'}</button></div>}/>
           {catalogError && <p>Model selection unavailable: {catalogError} {runtimeName} defaults remain in use.</p>}
           <div className="composer-actions"><p id={ids('composer-help')}>{!ready?'Disconnected':!selected?'Select a conversation.':thread?.clientArchived?'Archived · restore to send messages.':staleTarget?'The target turn ended. Your draft has not been sent.':targetTurn?'Shift+Enter to steer':active?'A turn is active. Wait for it to finish before starting another.':'Shift+Enter to send'}</p></div>
           {delivery && <p className="delivery-status" role="status">{delivery}</p>}
