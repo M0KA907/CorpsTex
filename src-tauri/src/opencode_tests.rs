@@ -1,5 +1,7 @@
 use super::*;
-use crate::projects::{Registry, Runtime};
+use crate::projects::Registry;
+#[cfg(unix)]
+use crate::projects::Runtime;
 use std::{path::PathBuf, sync::atomic::AtomicU64};
 static NEXT: AtomicU64 = AtomicU64::new(1);
 struct Temp(PathBuf);
@@ -42,6 +44,7 @@ fn wait(
 fn call(registry: &Registry, s: &super::super::Snapshot, action: Action) -> Result<Value, Error> {
     registry.request("main", &s.root, s.generation, action)
 }
+#[cfg(unix)]
 fn send(id: &str, text: &str) -> Action {
     Action::Send {
         thread_id: id.into(),
@@ -52,6 +55,7 @@ fn send(id: &str, text: &str) -> Action {
         effort: Some("high".into()),
     }
 }
+#[cfg(unix)]
 const FIXTURE: &str = r#"
 import json,sys,os
 root=os.getcwd();pending=None;model='fixture/free:free';effort='default';count=0
