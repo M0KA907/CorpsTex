@@ -14,15 +14,7 @@ concurrency:
 
 jobs:
   build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-22.04
-            platform: linux
-          - os: windows-2022
-            platform: windows
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-22.04
     timeout-minutes: 60
     defaults:
       run:
@@ -44,7 +36,6 @@ jobs:
           fi
           echo "RELEASE_VERSION=$VERSION" >> "$GITHUB_ENV"
       - name: Linux build prerequisites
-        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev librsvg2-dev libayatana-appindicator3-dev patchelf libfuse2 zstd
@@ -67,26 +58,16 @@ jobs:
           APPIMAGE_EXTRACT_AND_RUN: '1'
         run: npm run tauri -- build --ci -- --locked
       - name: Prepare versioned downloads
-        env:
-          RELEASE_PLATFORM: ${{ matrix.platform }}
         run: |
-          BINARY=src-tauri/target/release/corpstex
-          if [[ "$RUNNER_OS" == Windows ]]; then BINARY="$BINARY.exe"; fi
-          python scripts/release.py archive --platform "$RELEASE_PLATFORM" --binary "$BINARY" --output src-tauri/target/downloads
-          if [[ "$RUNNER_OS" == Windows ]]; then
-            cp src-tauri/target/release/bundle/nsis/*-setup.exe src-tauri/target/downloads/
-          else
-            cp src-tauri/target/release/bundle/appimage/*.AppImage src-tauri/target/downloads/
-          fi
+          python scripts/release.py archive --binary src-tauri/target/release/corpstex --output src-tauri/target/downloads
+          cp src-tauri/target/release/bundle/appimage/*.AppImage src-tauri/target/downloads/
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: corpstex-${{ matrix.platform }}-${{ github.sha }}
+          name: corpstex-linux-${{ github.sha }}
           path: |
-            src-tauri/target/downloads/*.zip
             src-tauri/target/downloads/*.tar.gz
             src-tauri/target/downloads/*.pkg.tar.zst
             src-tauri/target/downloads/*.AppImage
-            src-tauri/target/downloads/*-setup.exe
           if-no-files-found: error
           retention-days: 14
 
