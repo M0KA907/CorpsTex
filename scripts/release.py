@@ -1,5 +1,6 @@
 """Prepare versioned local release files using existing tools and locked dependencies."""
 import argparse
+import gzip
 import hashlib
 import json
 import re
@@ -115,6 +116,16 @@ def archive(binary, destination):
         'builddate = ' + str(int(time.time())) + '\nsize = ' + str(size) + '\n'
         'arch = x86_64\nlicense = GPL-3.0-only\n'
         'depend = glibc\ndepend = gcc-libs\ndepend = gtk3\ndepend = webkit2gtk-4.1\ndepend = hicolor-icon-theme\n', encoding='utf-8')
+    manifest = ['#mtree']
+    for path in sorted(tree.rglob('*')):
+        info = path.stat()
+        entry = './' + path.relative_to(tree).as_posix()
+        entry += ' type=' + ('dir' if path.is_dir() else 'file')
+        entry += f' uid=0 gid=0 mode={info.st_mode & 0o7777:o} time={int(info.st_mtime)}'
+        if path.is_file():
+            entry += f' size={info.st_size} sha256digest=' + hashlib.sha256(path.read_bytes()).hexdigest()
+        manifest.append(entry)
+    (tree / '.MTREE').write_bytes(gzip.compress(('\n'.join(manifest) + '\n').encode(), mtime=0))
     with tarfile.open(package, 'x', format=tarfile.GNU_FORMAT) as archive_file:
         for path in sorted(tree.rglob('*')):
             info = archive_file.gettarinfo(path, arcname=path.relative_to(tree).as_posix())

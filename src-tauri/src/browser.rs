@@ -23,6 +23,24 @@ pub struct Listing {
     truncated: bool,
     skipped: usize,
 }
+pub fn launch_root(
+    appimage: bool,
+    original: Option<PathBuf>,
+    current: Option<PathBuf>,
+) -> Result<String, Error> {
+    // AppRun may chdir into the mounted image. OWD is the runtime-provided
+    // original launch directory, not a project inside the packaging tree.
+    let root = if appimage { original } else { current }
+        .filter(|path| path.is_absolute())
+        .ok_or(Error::InvalidProject)?;
+    let root = fs::canonicalize(root).map_err(|_| Error::InvalidProject)?;
+    if !root.is_dir() {
+        return Err(Error::InvalidProject);
+    }
+    root.to_str()
+        .map(str::to_owned)
+        .ok_or(Error::InvalidProject)
+}
 pub fn browse(path: Option<String>, show_hidden: bool) -> Result<Listing, Error> {
     let home =
         std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(PathBuf::from);

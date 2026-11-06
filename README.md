@@ -70,6 +70,8 @@ Save editor changes, finish or stop active turns, and close CorpsTex before upda
 
 Codex/OpenCode keep their own histories, credentials and configuration. CorpsTex settings retain the same application identifier. Unsaved editor buffers and transient diagnostics do not survive exit.
 
+When switching from a manual user-local install to the Arch package, move the old `~/.local/bin/corpstex` launcher and `~/.local/share/applications/io.github.m0ka907.corpstex.desktop` entry aside: they otherwise take precedence over the package. Keep them as rollback copies; do not remove runtime data.
+
 There is no automatic in-app updater. Repository changes become a new download when a version is built and released.
 
 </details>

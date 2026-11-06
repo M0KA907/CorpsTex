@@ -220,10 +220,11 @@ async fn project_browser(
 
 #[tauri::command]
 fn default_project_root() -> Result<String, runtime::Error> {
-    std::env::current_dir()
-        .ok()
-        .and_then(|root| root.to_str().map(str::to_owned))
-        .ok_or(runtime::Error::InvalidProject)
+    browser::launch_root(
+        cfg!(target_os = "linux") && std::env::var_os("APPIMAGE").is_some(),
+        std::env::var_os("OWD").map(std::path::PathBuf::from),
+        std::env::current_dir().ok(),
+    )
 }
 
 #[tauri::command]
