@@ -1,4 +1,6 @@
 import { FolderBrowser } from './FolderBrowser';
+import { Diagnostics } from './Diagnostics';
+import { diagnostics } from './diagnostics';
 import { usePreferences } from './preferences';
 import { ApprovalCenter, ApprovalCard } from './Approvals';
 import type { Approval } from './Approvals';
@@ -17,17 +19,18 @@ type Project = {
 };
 type View = { projects: Project[]; exitRequested: boolean; exitProjects: Project[]; approvals: Approval[] };
 type DesktopWindow = Window & { __TAURI__?: { core: { invoke: <T>(command: string, args?: Record<string, unknown>) => Promise<T> } } };
-function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   const bridge = (window as DesktopWindow).__TAURI__?.core.invoke;
-  return bridge ? bridge<T>(command, args) : Promise.reject({ kind: 'desktopOnly' });
+  try {
+    const result=bridge?await bridge<T>(command,args):await Promise.reject({kind:'desktopOnly'});
+    if(command==='project_view')diagnostics.observe(result);
+    return result;
+  } catch(error){diagnostics.failure(command,args,error);throw error;}
 }
 const errors: Record<string, string> = {
-  openCodeKeyBusy: 'An OpenCode key save is already running. Wait for it to finish before saving again or exiting.',
-  openCodeKeySave: 'OpenCode could not save the API key. Check the installed runtime and provider ID, then re-enter the key to retry.',
-  openCodeKeyActivation: 'The key was saved, but OpenCode could not activate it. Review the provider account in OpenCode before saving another key.',
   openCodeUnavailable: 'OpenCode was not found on the desktop app’s absolute PATH. Windows requires opencode.exe.',
   openCodeUnsupported: 'This operation is unavailable through the installed OpenCode ACP protocol.',
-  openCodeAuthRequired: 'OpenCode requires authentication. Manage it outside CorpsTex, then reconnect.',
+  openCodeAuthRequired: 'OpenCode requires authentication. Run opencode auth login in your terminal, then refresh the connection under Settings → Runtime & permissions or reconnect your project.',
   invalidRequest: 'This thread or selection is not valid for the current project. Refresh and try again.',
   desktopOnly: 'Open the CorpsTex desktop application to connect a project.',
   invalidProject: 'Choose an existing project folder using its absolute path.',
@@ -114,6 +117,12 @@ export function ShutdownDialog({ projects, onCancel, onConfirm }: { projects: Pr
 }
 
 export default function App() {
+  useEffect(()=>{
+    const report=()=>diagnostics.failure('frontend',undefined,{kind:'frontendError'});
+    const reportError=(event:ErrorEvent)=>{if(event.error)report();};
+    window.addEventListener('error',reportError);window.addEventListener('unhandledrejection',report);
+    return()=>{window.removeEventListener('error',reportError);window.removeEventListener('unhandledrejection',report);};
+  },[]);
   const [runtime, setRuntime] = useState<'codex'|'opencode'>(()=>{try{return typeof window!=='undefined'&&localStorage.getItem('corpstex.runtime')==='opencode'?'opencode':'codex';}catch{return 'codex';}});
   const runtimeName=runtime==='opencode'?'OpenCode':'Codex';
   const [view, setView] = useState<View>({ projects: [], exitRequested: false, exitProjects: [], approvals: [] });
@@ -235,13 +244,14 @@ export default function App() {
     finally{setConnecting(false);}
   }
   return <>
-    <div className="shell" inert={view.exitRequested} data-palette={preferences.palette} data-accent={preferences.accent} data-density={preferences.density} data-text-size={preferences.textSize} data-reading-width={preferences.width} data-motion={preferences.motion} data-sidebar={sidebarOpen ? 'open' : 'collapsed'}>
+    <div className="shell" inert={view.exitRequested} data-palette={preferences.palette} data-accent={preferences.accent} data-density={preferences.density} data-text-size={preferences.textSize} data-reading-width={preferences.width} data-motion={preferences.motion} data-background={preferences.background} data-texture={preferences.texture} data-surfaces={preferences.surfaces} data-sidebar={sidebarOpen ? 'open' : 'collapsed'}>
       <a className="skip-link" href="#workspace" onClick={event=>{event.preventDefault();document.querySelector<HTMLElement>('.session-focused .workspace')?.focus();}}>Skip to workspace</a>
       <header className="app-header">
         <button className="sidebar-toggle" type="button" aria-expanded={sidebarOpen} aria-label={sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'} title="Toggle sidebar (Ctrl+B)" onClick={()=>setSidebarOpen(open=>!open)}><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M9.5 4v16"/></svg></button>
         <div className="identity">
           <span className="wordmark">CorpsTex</span>
         </div>
+        <Diagnostics suppressed={view.exitRequested||view.approvals.length>0||settingsOpen||browserOpen}/>
         <button className="settings-launcher" type="button" onClick={()=>setSettingsOpen(true)} aria-haspopup="dialog" aria-expanded={settingsOpen} aria-label="Personal settings" title="Personal settings"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="m9 3-1 3-3 1-2 5 2 5 3 1 1 3h6l1-3 3-1 2-5-2-5-3-1-1-3Z"/><circle cx="12" cy="12" r="3.5"/></svg></button>
         {(pollFailure||!connected)&&<p className="connection" role="status">
           {pollFailure ? `${runtimeName} status unavailable` : starting ? `${runtimeName} connecting` : `${runtimeName} disconnected`}
@@ -296,7 +306,7 @@ export { safeImageUrl, isLocalImageReference, readImageFiles, MessageImage } fro
 export { normalizeEvents, orderEvents, eventRow, historyRows, filterTimeline, timelineKey, TimelineView } from './Timeline';
 
 export { ModelPicker, filterModels, recommendedFreeModels } from './ModelPicker';
-export { RuntimeSettings, OpenCodeProviderSettings } from './Settings';
+export { RuntimeSettings, OpenCodeConnectionSettings } from './Settings';
 
 export { parseSessionLayout, serializeSessionLayout, sessionKey, focusSession, closeSession } from './SessionWorkspace';
 export { defaults as editorDefaults, sanitizeOptions, resolveOptions, fileUri, relocatedPath, language, getEditor, openFile, updateFile, saveFile, syncFile, closeFile, discardFile, acceptMerge, acceptDisk, saveSettings, dirty as editorDirty } from './editor/state';
@@ -306,3 +316,4 @@ export { McpStatusView } from './McpStatus';
 
 export { groupThreads, threadTime, ConversationLibrary } from './ConversationLibrary';
 export { LspNotificationQueue } from './editor/lspQueue';
+export { createDiagnostics, diagnosticsPrompt } from './diagnostics';

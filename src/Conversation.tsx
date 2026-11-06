@@ -5,7 +5,7 @@ import { ComposerInput, referencedSkills, type Skill } from './ComposerInput';
 import './composer-tools.css';
 import { UsageRail, type TokenUsage } from './UsageRail';
 import { ModelPicker, recommendedFreeModels } from './ModelPicker';
-import { Settings, RuntimeSettings, OpenCodeProviderSettings } from './Settings';
+import { Settings, RuntimeSettings } from './Settings';
 import { parseModelChoice, type Preferences } from './preferences';
 import { InlineApprovals, matchingApprovals, type Approval } from './Approvals';
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
@@ -430,7 +430,7 @@ export function Conversation({ sidebarToggle, runtime = 'codex', runtimeControls
 
   const loadImage=useMemo(()=>(path:string)=>invoke<string>('conversation_image',{runtime,root:project?.root,generation:project?.generation,threadId:selected,path}),[binding,selected,invoke]);
   return <div className="session-content" ref={container} onAnimationEnd={event=>{if(event.animationName==='turn-complete')setCompletedTurn(null);}}>
-    {settingsOpen && <Settings editorRoot={editorRoot||project?.root||''} tools={<McpStatus runtime={runtime} project={project} threadId={selected} invoke={invoke} errorText={errorText}/>} providers={<OpenCodeProviderSettings project={runtime==='opencode'?project:null} invoke={invoke} errorText={errorText}/>} onClose={onCloseSettings} preferences={preferences} onPreferences={onPreferences} storageError={storageError} modelControls={<>{modelControls}<button type="button" disabled={!ready} onClick={()=>void loadModels()}>Refresh models</button>{catalogError&&<p role="alert">{catalogError}</p>}</>} runtime={<RuntimeSettings runtime={runtime} project={project} invoke={invoke} errorText={errorText}/>} />}
+    {settingsOpen && <Settings timelineMode={timelineMode} onTimelineModeChange={onTimelineModeChange} editorRoot={editorRoot||project?.root||''} tools={<McpStatus runtime={runtime} project={project} threadId={selected} invoke={invoke} errorText={errorText}/>} onClose={onCloseSettings} preferences={preferences} onPreferences={onPreferences} storageError={storageError} modelControls={<>{modelControls}<button type="button" disabled={!ready} onClick={()=>void loadModels()}>Refresh models</button>{catalogError&&<p role="alert">{catalogError}</p>}</>} runtime={<RuntimeSettings runtime={runtime} project={project} invoke={invoke} errorText={errorText}/>} />}
     <aside className="projects" aria-labelledby={ids('projects-title')}>
       <div className="sidebar-header">{controls}{sidebarToggle}</div>
       <div className="thread-actions"><button type="button" disabled={busy || wantNew} onClick={() => {void open();}}>{wantNew ? 'Connecting…' : 'New conversation'}</button><button type="button" aria-label="Refresh conversations" title="Refresh conversations" disabled={!ready || busy || listing} onClick={() => {void list(false,true);void loadModels();}}><svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 7a7 7 0 0 1 11.5-1L20 9M4 15l2.4 3A7 7 0 0 0 18 17"/></svg></button></div>

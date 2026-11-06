@@ -30,9 +30,6 @@ pub enum Error {
     OpenCodeUnavailable,
     OpenCodeUnsupported,
     OpenCodeAuthRequired,
-    OpenCodeKeyBusy,
-    OpenCodeKeySave,
-    OpenCodeKeyActivation,
     InvalidProject,
     NotSubscribed,
     StaleGeneration,
@@ -228,28 +225,6 @@ impl Process {
 
     pub(crate) fn pid(&self) -> u32 {
         self.child.id()
-    }
-
-    // Credential commands read only stdin. Discard every byte of their output,
-    // including failures, because a provider may include secrets in diagnostics.
-    pub(crate) fn finish_input(&mut self) -> Result<bool, Error> {
-        self.writer.take();
-        let deadline = Instant::now() + Duration::from_secs(55);
-        loop {
-            if let Some(status) = self.child.try_wait().map_err(|_| Error::Transport)? {
-                return Ok(status.success());
-            }
-            if Instant::now() >= deadline {
-                return Err(Error::Timeout);
-            }
-            match self.messages.recv_timeout(Duration::from_millis(20)) {
-                Ok(Ok(_)) | Err(mpsc::RecvTimeoutError::Timeout) => {}
-                Ok(Err(error)) => return Err(error),
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    std::thread::sleep(Duration::from_millis(10))
-                }
-            }
-        }
     }
 
     pub(crate) fn poll(&mut self) -> Result<Option<String>, Error> {

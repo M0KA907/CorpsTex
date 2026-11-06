@@ -2,6 +2,7 @@ import { EditorSettings } from './editor/EditorSettings';
 import { ActivityBar, activityPresets } from './ActivityBar';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { defaults, type Preferences } from './preferences';
+import type { TimelineMode } from './Timeline';
 
 type Project = {root: string; generation: number; status: string; activeTurns?:number; pendingRequests?:number};
 type Invoke = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
@@ -14,51 +15,27 @@ const controls = [
 ];
 function display(value: unknown): string { return value == null ? 'Not explicitly set' : typeof value === 'string' ? value : 'Custom policy (preserved)'; }
 
-export function OpenCodeProviderSettings({project,invoke,errorText}:{project:Project|null;invoke:Invoke;errorText:(error:unknown)=>string}) {
-  const [provider,setProvider]=useState('opencode');
-  const [custom,setCustom]=useState('');
-  const [apiKey,setApiKey]=useState('');
+export function OpenCodeConnectionSettings({project,invoke,errorText}:{project:Project|null;invoke:Invoke;errorText:(error:unknown)=>string}) {
   const [busy,setBusy]=useState(false);
   const [feedback,setFeedback]=useState('');
   const mounted=useRef(true);
   useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;};},[]);
-  useEffect(()=>setApiKey(''),[project?.root,project?.generation]);
-  const providerId=provider==='custom'?custom.trim():provider;
   const canRefresh=project?.status==='ready'&&!project.activeTurns&&!project.pendingRequests;
   async function refresh() {
-    if(!project||busy)return;
+    if(!project||busy||!canRefresh)return;
     setBusy(true);setFeedback('');
     try {await invoke('reconnect_opencode',{root:project.root,generation:project.generation});if(mounted.current)setFeedback('OpenCode is reconnecting with its current provider settings.');}
     catch(error){if(mounted.current)setFeedback(errorText(error));}
     finally{if(mounted.current)setBusy(false);}
   }
-  async function save() {
-    if(busy||!apiKey.trim()||!providerId)return;
-    const submitted=apiKey;
-    setApiKey('');setBusy(true);setFeedback('');
-    try {
-      await invoke('opencode_save_key',{provider:providerId,apiKey:submitted});
-      let message='Key saved and activated in OpenCode.';
-      if(canRefresh&&project) {
-        try {await invoke('reconnect_opencode',{root:project.root,generation:project.generation});message+=' Refreshing the connection and models.';}
-        catch {message+=' Refresh the connection when current requests finish.';}
-      } else message+=project?' Refresh the connection when current turns and requests finish.':' Select OpenCode in Runtime and connect your project.';
-      if(mounted.current)setFeedback(message);
-    } catch(error){if(mounted.current)setFeedback(`${errorText(error)} The key field has been cleared.`);}
-    finally{if(mounted.current)setBusy(false);}
-  }
-  return <section className="settings-section" aria-labelledby="provider-settings-title">
-    <div className="settings-section-heading"><h2 id="provider-settings-title">OpenCode providers</h2><span className="provider-runtime-badge">OpenCode</span></div>
-    <p>Connect a provider with your API key. OpenCode stores and uses it across its clients; existing accounts are kept.</p>
-    <form className="provider-key-form" onSubmit={event=>{event.preventDefault();void save();}} autoComplete="off">
-      <label className="settings-field"><span>Provider</span><select value={provider} disabled={busy} onChange={event=>{setProvider(event.target.value);setApiKey('');setFeedback('');}}>
-        <option value="opencode">OpenCode</option><option value="openrouter">OpenRouter</option><option value="anthropic">Anthropic</option><option value="openai">OpenAI</option><option value="google">Google AI</option><option value="deepseek">DeepSeek</option><option value="groq">Groq</option><option value="mistral">Mistral</option><option value="xai">xAI</option><option value="custom">Other provider</option>
-      </select></label>
-      {provider==='custom'&&<label className="settings-field"><span>OpenCode provider ID</span><input value={custom} disabled={busy} maxLength={80} autoComplete="off" spellCheck={false} placeholder="Provider ID from your OpenCode configuration" onChange={event=>{setCustom(event.target.value);setApiKey('');setFeedback('');}}/></label>}
-      <label className="settings-field"><span>API key</span><input type="password" value={apiKey} disabled={busy} maxLength={16384} autoComplete="off" autoCapitalize="none" spellCheck={false} placeholder="Paste your provider API key" onChange={event=>setApiKey(event.target.value)} aria-describedby="provider-key-help"/></label>
-      <p id="provider-key-help" className="settings-caption">Sent to the installed OpenCode runtime. Not saved in browser storage. Saved keys are never shown.</p>
-      <div className="provider-key-actions"><button type="submit" disabled={busy||!apiKey.trim()||!providerId}>{busy?'Saving…':'Save API key'}</button>{project&&<button type="button" disabled={busy||!canRefresh} onClick={()=>void refresh()}>Refresh connection</button>}</div>
-    </form>
+  return <section className="settings-section" aria-labelledby="opencode-connection-title">
+    <h2 id="opencode-connection-title">OpenCode connection</h2>
+    <p>OpenCode manages provider accounts and credentials. CorpsTex uses your existing OpenCode configuration across app restarts.</p>
+    <p>To connect or change a provider, run <code>opencode auth login</code> in your terminal and follow OpenCode’s instructions. CorpsTex does not collect or store provider credentials.</p>
+    {project ? <>
+      <p>After changing accounts, refresh the connection when all turns and approval requests have finished.</p>
+      <button type="button" disabled={busy||!canRefresh} onClick={()=>void refresh()}>Refresh connection</button>
+    </> : <p>Select OpenCode in the runtime picker and connect your project. If OpenCode is missing, install it separately and make it available on your desktop app’s PATH.</p>}
     {busy&&<p role="status">Waiting for OpenCode…</p>}
     {feedback&&<p role="status" className="settings-notice">{feedback}</p>}
     <p className="settings-caption">Free labels come from the model catalog. Your provider’s access rules, limits, and pricing apply.</p>
@@ -116,7 +93,10 @@ export function RuntimeSettings({runtime='codex', project, invoke, errorText}: {
     const list = key==='approval_policy'?r?.allowedApprovalPolicies:key==='sandbox_mode'?r?.allowedSandboxModes:r?.allowedWebSearchModes;
     return !Array.isArray(list) || list.includes(value) || (key==='sandbox_mode'&&list.includes({'read-only':'readOnly','workspace-write':'workspaceWrite','danger-full-access':'dangerFullAccess'}[value] ?? value));
   }
-  if(runtime==='opencode')return <section className="settings-section" aria-labelledby="runtime-settings-title"><h2 id="runtime-settings-title">OpenCode</h2><p>Manage API keys under Providers. Choose a model, effort, and session mode under Model & reasoning.</p><p>Codex sandbox and approval settings do not apply to OpenCode. Its own permissions govern execution; requests appear in the Approval center.</p></section>;
+  if(runtime==='opencode')return <>
+    <OpenCodeConnectionSettings project={project} invoke={invoke} errorText={errorText}/>
+    <section className="settings-section" aria-labelledby="runtime-settings-title"><h2 id="runtime-settings-title">OpenCode permissions</h2><p>Choose a model, effort, and session mode under Model & reasoning.</p><p>Codex sandbox and approval settings do not apply to OpenCode. Its own permissions govern execution; requests appear in the Approval center.</p></section>
+  </>;
   return <section className="settings-section" aria-labelledby="runtime-settings-title">
     <div className="settings-section-heading"><div><h2 id="runtime-settings-title">Configuration & permissions</h2></div><button type="button" disabled={!ready||busy} onClick={()=>void load()}>Refresh config</button></div>
     <p>Effective configuration for <strong>{project?.root ?? 'your project'}</strong>. Saves update your Codex user config across clients, without reloading active turns.</p>
@@ -135,27 +115,35 @@ export function RuntimeSettings({runtime='codex', project, invoke, errorText}: {
   </section>;
 }
 
-export function Settings({onClose,preferences,onPreferences,storageError,modelControls,runtime,providers,tools,editorRoot=''}: {onClose:()=>void;preferences:Preferences;onPreferences:(next:Preferences)=>void;storageError:string;modelControls:ReactNode;runtime:ReactNode;providers:ReactNode;tools?:ReactNode;editorRoot?:string}) {
+export function Settings({onClose,preferences,onPreferences,storageError,modelControls,runtime,tools,editorRoot='',timelineMode='collapsed',onTimelineModeChange}: {onClose:()=>void;preferences:Preferences;onPreferences:(next:Preferences)=>void;storageError:string;modelControls:ReactNode;runtime:ReactNode;tools?:ReactNode;editorRoot?:string;timelineMode?:TimelineMode;onTimelineModeChange?:(mode:TimelineMode)=>void}) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [section,setSection] = useState('appearance');
-  useEffect(()=>{const node=dialog.current;node?.showModal();return()=>node?.close();},[]);
-  const fields: {key:keyof Preferences;label:string;options:[string,string][]}[] = [
-    {key:'palette',label:'Palette',options:[['charcoal','Charcoal'],['midnight','Midnight'],['forest','Forest']]},
-    {key:'accent',label:'Accent',options:[['gold','Warm gold'],['mint','Fresh mint'],['blue','Sky blue']]},
-    {key:'textSize',label:'Text size',options:[['small','Small'],['medium','Medium'],['large','Large']]},
-    {key:'width',label:'Reading width',options:[['focused','Focused'],['wide','Wide']]},
-    {key:'density',label:'Spacing',options:[['comfortable','Comfortable'],['compact','Compact']]},
-    {key:'motion',label:'Motion',options:[['system','Lively · respect system preference'],['reduced','Reduced']]},
+  useEffect(()=>{
+    const node=dialog.current;
+    const launcher=document.querySelector<HTMLElement>('[aria-label="Personal settings"]');
+    node?.showModal();
+    return()=>{node?.close();launcher?.focus();};
+  },[]);
+  const fields: {key:keyof Preferences;group:string;label:string;hint?:string;options:[string,string][]}[] = [
+    {key:'palette',group:'Colors',label:'Palette',options:[['charcoal','Charcoal'],['midnight','Midnight'],['forest','Forest']]},
+    {key:'accent',group:'Colors',label:'Accent',options:[['gold','Warm gold'],['mint','Fresh mint'],['blue','Sky blue']]},
+    {key:'textSize',group:'Typography',label:'Text size',options:[['small','Small'],['medium','Medium'],['large','Large']]},
+    {key:'width',group:'Layout',label:'Reading width',options:[['focused','Focused'],['wide','Wide']]},
+    {key:'density',group:'Layout',label:'Spacing',options:[['comfortable','Comfortable'],['compact','Compact']]},
+    {key:'background',group:'Effects',label:'Background dots',options:[['animated','Animated'],['static','Static'],['off','Off']]},
+    {key:'texture',group:'Effects',label:'Grain texture',options:[['on','On'],['off','Off']]},
+    {key:'surfaces',group:'Effects',label:'Surfaces',hint:'Solid removes glass and blur, covering background dots. Grain texture stays independent.',options:[['glass','Glass'],['solid','Solid']]},
+    {key:'motion',group:'Effects',label:'Motion',options:[['system','Lively · respect system preference'],['reduced','Reduced']]},
   ];
   return <dialog className="settings-dialog" ref={dialog} aria-labelledby="settings-title" onCancel={event=>{event.preventDefault();onClose();}} onClose={event=>{if(!event.currentTarget.open)onClose();}}>
     <header className="settings-header"><div><h1 id="settings-title">Settings</h1></div><button type="button" autoFocus onClick={onClose} aria-label="Close settings">Close <span aria-hidden="true">×</span></button></header>
-    <nav className="settings-nav" aria-label="Settings categories">{[['appearance','Appearance'],['activity','Thinking bar'],['providers','Providers'],['models','Model & reasoning'],['editor','Editor'],['tools','MCP tools'],['runtime','Runtime & permissions']].map(([id,label])=><button type="button" key={id} aria-current={section===id?'page':undefined} onClick={()=>setSection(id)}>{label}</button>)}</nav>
-    <div className="settings-body" key={section}>
-      {section==='appearance' && <section className="settings-section" aria-labelledby="appearance-title"><h2 id="appearance-title">Appearance</h2><p>Saved on this device.</p><div className="palette-preview" aria-hidden="true"><span>c/</span><div><i/><i/><i/></div></div>{fields.map(field=><label className="settings-field" key={field.key}><span>{field.label}</span><select value={preferences[field.key]} onChange={event=>onPreferences({...preferences,[field.key]:event.target.value})}>{field.options.map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label>)}<p className="settings-caption">Respects system reduced motion.</p><button type="button" onClick={()=>onPreferences({...defaults})}>Reset appearance</button>{storageError&&<p role="alert">{storageError}</p>}</section>}
+    <nav className="settings-nav" aria-label="Settings categories">{[['appearance','Appearance'],['activity','Thinking bar'],['models','Model & reasoning'],['editor','Editor'],['tools','MCP tools'],['runtime','Runtime & permissions']].map(([id,label])=><button type="button" key={id} aria-current={section===id?'page':undefined} onClick={()=>setSection(id)}>{label}</button>)}</nav>
+    <div className="settings-body" key={section} tabIndex={0} role="region" aria-label="Settings content">
+      {section==='appearance' && <section className="settings-section" aria-labelledby="appearance-title"><h2 id="appearance-title">Appearance</h2><p>Saved on this device.</p><div className="palette-preview" aria-hidden="true"><span>c/</span><div><i/><i/><i/></div></div>{['Colors','Typography','Layout','Effects'].map(group=><fieldset className="appearance-group" key={group}><legend>{group}</legend>{fields.filter(field=>field.group===group).map(field=><label className="settings-field" key={field.key}><span>{field.label}{field.hint&&<small id={`appearance-${field.key}-hint`}>{field.hint}</small>}</span><select value={preferences[field.key]} aria-describedby={field.hint?`appearance-${field.key}-hint`:undefined} onChange={event=>onPreferences({...preferences,[field.key]:event.target.value})}>{field.options.map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label>)}</fieldset>)}<p className="settings-caption">Changes apply immediately. Reduced motion stops background animation and respects your system preference.</p><button type="button" onClick={()=>onPreferences({...defaults,activityPreset:preferences.activityPreset,activityDisplay:preferences.activityDisplay})}>Reset appearance</button>{storageError&&<p role="alert">{storageError}</p>}</section>}
+      {section==='appearance' && onTimelineModeChange && <section className="settings-section" aria-labelledby="timeline-settings-title"><h2 id="timeline-settings-title">Execution timeline</h2><p role="status">{timelineMode==='hidden'?'Hidden. Show it here when needed.':'Visible. Expand or collapse it from its heading.'} Visibility is saved on this device.</p><button type="button" className="timeline-visibility" onClick={()=>onTimelineModeChange(timelineMode==='hidden'?'expanded':'hidden')}>{timelineMode==='hidden'?'Show timeline':'Hide timeline'}</button></section>}
       {section==='activity' && <section className="settings-section" aria-labelledby="activity-settings-title"><h2 id="activity-settings-title">Thinking bar</h2><label className="settings-field"><span>Show activity as</span><select value={preferences.activityDisplay} onChange={event=>onPreferences({...preferences,activityDisplay:event.target.value as Preferences['activityDisplay']})}><option value="bar">Full bar</option><option value="compact">Compact</option><option value="hidden">Hidden</option></select></label><div className="activity-preview"><p className="settings-caption">Preview</p><ActivityBar preset={preferences.activityPreset} label="Thinking" active preview compact={preferences.activityDisplay==='compact'}/></div><div className="activity-presets" role="group" aria-label="Thinking bar styles">{activityPresets.map(([id,name])=><button type="button" key={id} aria-pressed={preferences.activityPreset===id} onClick={()=>onPreferences({...preferences,activityPreset:id})}><ActivityBar preset={id} label={name} active preview compact/></button>)}</div>{storageError&&<p role="alert">{storageError}</p>}</section>}
       {section==='models'  && <section className="settings-section" aria-labelledby="models-settings-title"><h2 id="models-settings-title">Model & reasoning</h2><p>Saved per project. Changes apply to the next turn.</p>{modelControls}</section>}
       {section==='runtime' && runtime}
-      {section==='providers' && providers}
       {section==='tools' && tools}
       {section==='editor' && <EditorSettings root={editorRoot}/>}
     </div>

@@ -153,7 +153,6 @@ export const ExecutionTimeline = memo(function ExecutionTimeline({ projects, his
   const turns = [...new Set(filterTimeline(projectRows,'',thread,'').map(row => row.turn).filter(Boolean))];
   if (mode === 'hidden') return null;
   return <section className="timeline" aria-labelledby="timeline-title">
-    <button type="button" className="timeline-hide" onClick={() => onModeChange?.('hidden')}>Hide timeline</button>
     <details open={open} onToggle={event => {
       if (event.currentTarget.open !== open) onModeChange?.(event.currentTarget.open ? 'expanded' : 'collapsed');
     }}>

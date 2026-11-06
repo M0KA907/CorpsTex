@@ -5,7 +5,6 @@ mod editor;
 mod editor_install;
 mod editor_lsp;
 mod media;
-mod opencode_credentials;
 mod projects;
 mod runtime;
 mod runtimes;
@@ -310,28 +309,6 @@ async fn conversation_image(
 }
 
 #[tauri::command]
-async fn opencode_save_key(
-    app: tauri::AppHandle,
-    window: tauri::Window,
-    provider: String,
-    api_key: String,
-) -> Result<(), runtime::Error> {
-    if app
-        .state::<runtimes::Runtimes>()
-        .view(window.label())?
-        .exit_requested
-    {
-        return Err(runtime::Error::ExitPending);
-    }
-    let guard = opencode_credentials::begin()?;
-    tauri::async_runtime::spawn_blocking(move || {
-        opencode_credentials::save(provider, api_key, guard)
-    })
-    .await
-    .map_err(|_| runtime::Error::Transport)?
-}
-
-#[tauri::command]
 async fn reconnect_opencode(
     app: tauri::AppHandle,
     window: tauri::Window,
@@ -366,9 +343,6 @@ async fn finish_exit(app: tauri::AppHandle, confirmed: bool) -> Result<(), runti
     if app.state::<editor::Editor>().has_dirty() {
         app.state::<editor::Editor>().request_exit();
         return Err(runtime::Error::ConfirmationRequired);
-    }
-    if opencode_credentials::saving() {
-        return Err(runtime::Error::OpenCodeKeyBusy);
     }
     if app
         .state::<ExitState>()
@@ -435,7 +409,6 @@ fn main() {
             editor_lsp_poll,
             editor_lsp_stop,
             connect_project,
-            opencode_save_key,
             reconnect_opencode,
             default_project_root,
             project_browser,
