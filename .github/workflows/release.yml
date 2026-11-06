@@ -1,0 +1,118 @@
+name: Build release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            platform: linux
+          - os: windows-2022
+            platform: windows
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Check version and tag
+        run: |
+          VERSION=$(python scripts/release.py version)
+          if [[ "$GITHUB_REF_TYPE" == tag && "$GITHUB_REF_NAME" != "v$VERSION" ]]; then
+            echo 'Tag must match all application manifests' >&2
+            exit 1
+          fi
+          echo "RELEASE_VERSION=$VERSION" >> "$GITHUB_ENV"
+      - name: Linux build prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev librsvg2-dev libayatana-appindicator3-dev patchelf libfuse2 zstd
+      - name: Rust toolchain
+        run: |
+          rustup toolchain install 1.99.1 --profile minimal --component clippy,rustfmt
+          rustup default 1.99.1
+      - name: Locked frontend dependencies
+        run: npm ci
+      - name: Dependency notices
+        run: python scripts/release.py notices
+      - name: Existing Rust checks
+        run: |
+          cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+          cargo check --locked --manifest-path src-tauri/Cargo.toml
+          cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+          cargo test --locked --manifest-path src-tauri/Cargo.toml
+      - name: Build platform installer
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: '1'
+        run: npm run tauri -- build --ci -- --locked
+      - name: Prepare versioned downloads
+        env:
+          RELEASE_PLATFORM: ${{ matrix.platform }}
+        run: |
+          BINARY=src-tauri/target/release/corpstex
+          if [[ "$RUNNER_OS" == Windows ]]; then BINARY="$BINARY.exe"; fi
+          python scripts/release.py archive --platform "$RELEASE_PLATFORM" --binary "$BINARY" --output src-tauri/target/downloads
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            cp src-tauri/target/release/bundle/nsis/*-setup.exe src-tauri/target/downloads/
+          else
+            cp src-tauri/target/release/bundle/appimage/*.AppImage src-tauri/target/downloads/
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: corpstex-${{ matrix.platform }}-${{ github.sha }}
+          path: |
+            src-tauri/target/downloads/*.zip
+            src-tauri/target/downloads/*.tar.gz
+            src-tauri/target/downloads/*.pkg.tar.zst
+            src-tauri/target/downloads/*.AppImage
+            src-tauri/target/downloads/*-setup.exe
+          if-no-files-found: error
+          retention-days: 14
+
+  attach:
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: corpstex-*-${{ github.sha }}
+          merge-multiple: true
+          path: downloads
+      - name: Attach to the owner's draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          # Owner creates the annotated tag and draft. Never create a bot-owned release.
+          test "$(gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft')" = true
+          test "$(gh release view "$RELEASE_TAG" --json author --jq '.author.login')" = M0KA907
+          cd downloads
+          sha256sum * > SHA256SUMS
+          gh release upload "$RELEASE_TAG" ./*
+          # Leave the draft unpublished for artifact review and platform smoke tests.
