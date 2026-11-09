@@ -121,6 +121,46 @@ fn read_lines(reader: impl Read, sender: mpsc::SyncSender<Result<String, Error>>
     }
 }
 
+/// How a spawned runtime child must see `LD_LIBRARY_PATH`.
+enum LibraryPath {
+    /// No bundle entry found; leave the inherited value untouched.
+    Keep,
+    /// Only bundle entries remained; remove the variable for the child.
+    Remove,
+    /// Bundle entries dropped; install this user-only value instead.
+    Replace(std::ffi::OsString),
+}
+
+// The AppImage launcher prepends the bundle's own libraries to LD_LIBRARY_PATH
+// so the application can find them. System-installed runtimes must not
+// inherit bundle-internal entries: a bundled library older than the runtime
+// requires makes the child exit instantly (observed as
+// `libffi.so.8: version LIBFFI_CALL_PLAN_8.4 not found (required by node)`
+// for codex 0.167.0 inside the CI-built AppImage). Drop bundle entries only;
+// user-configured system paths stay.
+fn library_path_for_child(value: &std::ffi::OsStr, bundle_root: Option<&Path>) -> LibraryPath {
+    let mut has_bundle_entry = false;
+    let filtered: Vec<_> = env::split_paths(value)
+        .filter(|entry| !entry.as_os_str().is_empty())
+        .filter(|entry| {
+            let bundle = entry.to_string_lossy().contains("appimage_extracted")
+                || bundle_root.is_some_and(|root| entry.starts_with(root));
+            has_bundle_entry |= bundle;
+            !bundle
+        })
+        .collect();
+    if !has_bundle_entry {
+        return LibraryPath::Keep;
+    }
+    if filtered.is_empty() {
+        return LibraryPath::Remove;
+    }
+    match env::join_paths(filtered) {
+        Ok(joined) => LibraryPath::Replace(joined),
+        Err(_) => LibraryPath::Remove,
+    }
+}
+
 impl Process {
     fn spawn(executable: &Path, args: &[&str]) -> Result<Self, Error> {
         Self::spawn_at(executable, args, None)
@@ -140,6 +180,18 @@ impl Process {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        if let Some(value) = env::var_os("LD_LIBRARY_PATH") {
+            let bundle_root = env::var_os("APPDIR").map(PathBuf::from);
+            match library_path_for_child(&value, bundle_root.as_deref()) {
+                LibraryPath::Keep => {}
+                LibraryPath::Remove => {
+                    command.env_remove("LD_LIBRARY_PATH");
+                }
+                LibraryPath::Replace(joined) => {
+                    command.env("LD_LIBRARY_PATH", joined);
+                }
+            }
+        }
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
@@ -556,6 +608,78 @@ mod tests {
     #[cfg(unix)]
     fn fixture(script: &str) -> Process {
         Process::spawn(Path::new("/bin/sh"), &["-c", script]).unwrap()
+    }
+
+    #[test]
+    fn bundle_library_entries_are_dropped_for_runtime_children() {
+        use LibraryPath::{Keep, Remove, Replace};
+        // CI-AppImage regression: the bundle's own libraries (older libffi)
+        // must not reach the runtime child; user paths stay.
+        let bundle = Path::new("/tmp/appimage_extracted_abc");
+        match library_path_for_child(
+            "/tmp/appimage_extracted_abc/usr/lib:/user/custom/lib".as_ref(),
+            Some(bundle),
+        ) {
+            Replace(joined) => assert_eq!(joined, "/user/custom/lib"),
+            _ => unreachable!(),
+        }
+        // Extract-mode entries are dropped even without a matching APPDIR.
+        assert!(matches!(
+            library_path_for_child("/tmp/appimage_extracted_xyz/usr/lib".as_ref(), None),
+            Remove
+        ));
+        // Only bundle entries: the variable is removed entirely.
+        assert!(matches!(
+            library_path_for_child(
+                "/tmp/appimage_extracted_abc/usr/lib:/tmp/appimage_extracted_abc/lib".as_ref(),
+                Some(bundle)
+            ),
+            Remove
+        ));
+        // Paths outside the bundle root and without a bundle marker stay.
+        assert!(matches!(
+            library_path_for_child("/opt/secretbundle/lib".as_ref(), Some(bundle)),
+            Keep
+        ));
+        assert!(matches!(
+            library_path_for_child("/user/custom/lib".as_ref(), Some(bundle)),
+            Keep
+        ));
+        // Empty entries collapse; bundle entries under an unset APPDIR are
+        // still recognized by their extract-directory marker.
+        match library_path_for_child(
+            "::/tmp/appimage_extracted_abc/usr/lib:/user/a:/user/b".as_ref(),
+            Some(bundle),
+        ) {
+            Replace(joined) => assert_eq!(joined, "/user/a:/user/b"),
+            _ => unreachable!(),
+        }
+        // APPDIR-rooted entries are dropped by path components.
+        match library_path_for_child(
+            "/tmp/other/extracted/usr/lib:/user/a".as_ref(),
+            Some(Path::new("/tmp/other/extracted")),
+        ) {
+            Replace(joined) => assert_eq!(joined, "/user/a"),
+            _ => unreachable!(),
+        }
+        // The extract-directory marker is substring-based by design, so a
+        // lookalike path is dropped too.
+        assert!(matches!(
+            library_path_for_child(
+                "/tmp/appimage_extracted_abc-alternative/lib".as_ref(),
+                Some(bundle)
+            ),
+            Remove
+        ));
+        // A string prefix of the bundle root that is not a component prefix
+        // stays (starts_with is component-wise).
+        assert!(matches!(
+            library_path_for_child(
+                "/tmp/other/extracted-extra/lib".as_ref(),
+                Some(Path::new("/tmp/other/extracted"))
+            ),
+            Keep
+        ));
     }
 
     #[cfg(unix)]
