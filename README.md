@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  A native Linux desktop interface for <a href="https://github.com/openai/codex">Codex</a> and <a href="https://opencode.ai/">OpenCode</a>.
+  A Linux desktop interface for <a href="https://github.com/openai/codex">Codex</a> and <a href="https://opencode.ai/">OpenCode</a>.
 </p>
 
 <p align="center">
@@ -16,26 +16,45 @@
 
 ### Overview
 
-CorpsTex brings coding-agent conversations, project files, and development tools into a customizable desktop workspace.
+CorpsTex combines coding-agent conversations, project files, and development tools in a customizable Linux desktop application.
 
-**Features**
-- Multi-project workspace with session tabs
-- Integrated file explorer and code editor
-- Streaming conversations and tool activity
-- Permission management and execution history
-- Custom themes, typography, and appearance
-- Integration with system-installed Codex and OpenCode
+### Features
+
+- **Projects & sessions** — Work across projects with organized conversations and session tabs.
+- **Files & editor** — Browse and edit project files without leaving the workspace.
+- **Agent activity** — Follow streaming responses, tool output, and execution history.
+- **Permissions** — Review agent actions through a central approval interface.
+- **Appearance** — Customize themes, colors, and typography.
 
 ### Installation
 
-Available for **Linux x86_64** as an Arch package, AppImage, or portable archive.
+CorpsTex provides **Linux x86_64** builds as an Arch Linux package, AppImage, and portable archive.
 
-[**Download from GitHub Releases**](https://github.com/M0KA907/CorpsTex/releases)
+**[Get CorpsTex from GitHub Releases](https://github.com/M0KA907/CorpsTex/releases)**
 
-Requires an independently installed and configured Codex or OpenCode runtime.
+> [!IMPORTANT]
+> Install and configure [Codex](https://github.com/openai/codex) or [OpenCode](https://opencode.ai/) separately. CorpsTex uses the existing runtime on your system.
+
+<details>
+<summary><strong>Available package formats</strong></summary>
+
+- **Arch Linux:** `.pkg.tar.zst`
+- **AppImage:** `.AppImage`
+- **Portable:** `.tar.gz`
+
+Choose a package from the Releases page that matches your system.
+
+</details>
+
+### Project status
+
+> [!NOTE]
+> CorpsTex is in active development. Some runtime capabilities are not yet supported in the desktop interface.
+
+Bugs and feature requests can be tracked through [GitHub Issues](https://github.com/M0KA907/CorpsTex/issues).
 
 ---
 
 <p align="center">
-  <sub>Open source · GPL-3.0 · Linux</sub>
+  <sub>Linux · Codex / OpenCode · <a href="LICENSE">GPL-3.0</a></sub>
 </p>
