@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { pruneEditorViews } from './EditorSurface';
-import { closeFile, dirty, discardFile, getEditor, invoke, message, notice, saveFile, syncFile, useEditor } from './state';
+import { closeFile, dirty, discardFile, discardEditorRecovery, getEditor, invoke, message, notice, persistEditorSession, restoreEditorSession, saveFile, syncFile, useEditor } from './state';
 export function EditorChrome(){
   const state=useEditor();const used=useRef(false);const dirtyNow=state.files.some(f=>dirty(f)||Boolean(f.conflict));
   useEffect(()=>{void invoke('editor_dirty',{dirty:dirtyNow}).catch(e=>{if(dirtyNow)notice('Close protection could not reach the desktop: '+message(e));});},[dirtyNow]);
@@ -19,7 +19,7 @@ export function EditorChrome(){
         }
       })().catch(e=>notice(message(e))).finally(()=>{polling=false;});
     },1500);
-    const unload=(event:BeforeUnloadEvent)=>{if(getEditor().files.some(f=>dirty(f)||f.conflict)){event.preventDefault();event.returnValue='';}};
+    const unload=(event:BeforeUnloadEvent)=>{persistEditorSession();if(getEditor().files.some(f=>dirty(f)||f.conflict)){event.preventDefault();event.returnValue='';}};
     const keys=(event:KeyboardEvent)=>{
       if(!(event.ctrlKey||event.metaKey)||event.altKey)return;
       const active=getEditor().active;if(!active)return;
@@ -30,6 +30,11 @@ export function EditorChrome(){
     return()=>{gone=true;clearInterval(timer);window.removeEventListener('beforeunload',unload);window.removeEventListener('keydown',keys);};
   },[]);
   useEffect(()=>{if(!used.current&&!state.files.length)return;used.current=true;void import('./monaco').then(m=>{const ids=new Set(getEditor().files.map(f=>f.id));m.disposeClosedModels(ids);pruneEditorViews(ids);});},[state.files.map(f=>f.id).join(',')]);
-  return <>{state.notice&&<div className="editor-notice" role="status"><span>{state.notice}</span><button type="button" aria-label="Dismiss editor notice" onClick={()=>notice('')}>×</button></div>}
+  return <>{state.recovery&&<aside className="editor-recovery editor-warning" aria-label="Previous editor session">
+    <strong>Previous editor session available</strong>
+    <p>{state.recovery.tabs.length} tab references. {state.recovery.tabs.filter(t=>t.unsaved).length} had unsaved edits whose text is unrecoverable. Restoration requires confirmation; folder access must be granted again.</p>
+    <button type="button" onClick={()=>{if(restoreEditorSession(state.recovery!))requestAnimationFrame(()=>document.querySelector<HTMLButtonElement>('.file-tab [aria-selected="true"]')?.focus());}}>Restore editor session…</button>
+    <button type="button" onClick={()=>{if(window.confirm('Forget the previous editor tab references? Current open buffers will be retained.'))discardEditorRecovery();}}>Forget previous session…</button>
+  </aside>}{state.notice&&<div className="editor-notice" role="status"><span>{state.notice}</span><button type="button" aria-label="Dismiss editor notice" onClick={()=>notice('')}>×</button></div>}
   </>;
 }

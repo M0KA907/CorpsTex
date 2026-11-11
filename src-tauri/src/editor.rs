@@ -105,6 +105,7 @@ pub fn root_label(path: &Path) -> String {
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum Action {
     Authorize,
+    Roots,
     List {
         path: String,
     },
@@ -713,6 +714,150 @@ fn replace_checked(temp: &Path, target: &Path, original: &[u8], relative: &str) 
         ))
     }
 }
+fn directory_children(file: &File, path: &Path) -> PathBuf {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::fd::AsRawFd;
+        let _ = path;
+        PathBuf::from(format!("/proc/self/fd/{}", file.as_raw_fd()))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = file;
+        path.to_path_buf()
+    }
+}
+#[derive(Default)]
+struct CopyBudget {
+    entries: usize,
+    bytes: u64,
+}
+fn copy_entry(
+    source: &Path,
+    destination: &Path,
+    budget: &mut CopyBudget,
+    depth: usize,
+) -> Result<()> {
+    budget.entries += 1;
+    if budget.entries > 5000 || depth > 32 {
+        return Err(error("copyLimit", "Duplication is limited to 5,000 entries and 32 directory levels. Choose a smaller folder."));
+    }
+    let meta = checked_meta(source)?;
+    if meta.is_dir() {
+        let source_handle = open_directory(source)?;
+        let source = directory_children(&source_handle, source);
+        fs::create_dir(destination).map_err(io)?;
+        let destination_handle = open_directory(destination)?;
+        let destination = directory_children(&destination_handle, destination);
+        for item in fs::read_dir(source).map_err(io)? {
+            let item = item.map_err(io)?;
+            let name = item.file_name();
+            let name = name
+                .to_str()
+                .ok_or_else(|| error("path", "Unsupported filename in copied folder."))?;
+            relative(name)?; // Includes protected Git/editor metadata checks.
+            copy_entry(&item.path(), &destination.join(name), budget, depth + 1)?;
+        }
+        destination_handle
+            .set_permissions(meta.permissions())
+            .map_err(io)?;
+        destination_handle.sync_all().map_err(io)?;
+    } else if meta.is_file() {
+        if budget.bytes.saturating_add(meta.len()) > 64 * 1024 * 1024 {
+            return Err(error(
+                "copyLimit",
+                "Duplication is limited to 64 MiB total. Choose fewer files.",
+            ));
+        }
+        let bytes = read(source)?;
+        budget.bytes += bytes.len() as u64;
+        if budget.bytes > 64 * 1024 * 1024 {
+            return Err(error(
+                "copyLimit",
+                "Files grew beyond the 64 MiB duplication budget.",
+            ));
+        }
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(destination)
+            .map_err(io)?;
+        file.set_permissions(meta.permissions()).map_err(io)?;
+        file.write_all(&bytes).map_err(io)?;
+        file.sync_all().map_err(io)?;
+    } else {
+        return Err(error(
+            "path",
+            "Only regular files and folders may be duplicated.",
+        ));
+    }
+    Ok(())
+}
+fn duplicate_checked(source: &Path, destination: &Path, relative_destination: &str) -> Result<()> {
+    match fs::symlink_metadata(destination) {
+        Ok(_) => {
+            return Err(error(
+                "exists",
+                "The destination already exists. Choose a different name; nothing was overwritten.",
+            ))
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+        Err(e) => return Err(io(e)),
+    }
+    let name = format!(
+        ".corpstex-save-copy-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    );
+    let staging = destination.parent().unwrap().join(&name);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&staging)
+            .map_err(io)?;
+    }
+    #[cfg(not(unix))]
+    fs::create_dir(&staging).map_err(io)?;
+    let handle = match open_directory(&staging) {
+        Ok(handle) => handle,
+        Err(e) => {
+            let _ = fs::remove_dir(&staging);
+            return Err(e);
+        }
+    };
+    let payload = directory_children(&handle, &staging).join("copy");
+    let result = copy_entry(source, &payload, &mut CopyBudget::default(), 0)
+        .and_then(|()| move_no_replace(&payload, destination));
+    // Cleanup addresses the private staging handle, never a substituted source or
+    // destination. The final destination is published only by a no-clobber move.
+    let cleanup = if payload.is_dir() {
+        fs::remove_dir_all(&payload)
+    } else {
+        fs::remove_file(&payload)
+    };
+    if let Err(e) = cleanup {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            let prefix = relative_destination
+                .rsplit_once('/')
+                .map(|(p, _)| p)
+                .unwrap_or("");
+            let retained = if prefix.is_empty() {
+                format!("{name}/copy")
+            } else {
+                format!("{prefix}/{name}/copy")
+            };
+            return Err(error("copyCleanup", &format!("Duplication stopped. Incomplete staged content remains at folder-relative path {retained}. Source files were not changed; inspect the retained content manually.")));
+        }
+    }
+    drop(handle);
+    let _ = fs::remove_dir(staging);
+    result
+}
 impl Editor {
     pub fn context(&self, window: &str, project: &str, runtime: &str) -> Result<u64> {
         if !["codex", "opencode"].contains(&runtime)
@@ -914,6 +1059,19 @@ impl Editor {
             .gate
             .lock()
             .map_err(|_| error("busy", "Editor is busy."))?;
+        if matches!(action, Action::Roots) {
+            let roots = self
+                .roots
+                .lock()
+                .map_err(|_| error("busy", "Editor state unavailable."))?;
+            let context = roots
+                .get(window)
+                .filter(|s| s.id == scope)
+                .ok_or_else(|| error("grant", "Editor context changed."))?;
+            let mut labels: Vec<String> = context.grants.keys().map(|p| root_label(p)).collect();
+            labels.sort();
+            return Ok(serde_json::json!({"roots": labels}));
+        }
         let (root, _lease) = self.lease(window, scope, root)?;
         if matches!(action, Action::Authorize) {
             return Ok(serde_json::json!({"root":root_label(&root)}));
@@ -925,7 +1083,7 @@ impl Editor {
             PathBuf::from(format!("/proc/self/fd/{}/.", _lease.as_raw_fd()))
         };
         match action {
-            Action::Authorize => unreachable!(),
+            Action::Authorize | Action::Roots => unreachable!(),
             Action::List { path } => {
                 let held;
                 let target = if path.is_empty() {
@@ -1135,16 +1293,16 @@ impl Editor {
                 Ok(serde_json::Value::Null)
             }
             Action::Duplicate { path, destination } => {
-                let source = parent(&root, &relative(&path)?)?;
-                let dest = parent(&root, &relative(&destination)?)?;
-                let bytes = read(&source.path)?;
-                let mut file = OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(&dest.path)
-                    .map_err(io)?;
-                file.write_all(&bytes).map_err(io)?;
-                file.sync_all().map_err(io)?;
+                let source_parts = relative(&path)?;
+                let destination_parts = relative(&destination)?;
+                let source = parent(&root, &source_parts)?;
+                let dest = parent(&root, &destination_parts)?;
+                if checked_meta(&source.path)?.is_dir()
+                    && destination_parts.starts_with(&source_parts)
+                {
+                    return Err(error("path", "A folder cannot be duplicated into itself."));
+                }
+                duplicate_checked(&source.path, &dest.path, &destination)?;
                 Ok(serde_json::Value::Null)
             }
             Action::Delete { path, expected } => {
@@ -1256,6 +1414,140 @@ mod tests {
         assert!(fresh
             .request_scoped("main", scope, &root, Action::Authorize)
             .is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn root_inventory_is_scoped_and_never_recreates_authority() {
+        let (e, root) = fixture();
+        let scope = e.test_scope("main");
+        let roots = e.request_scoped("main", scope, "", Action::Roots).unwrap();
+        assert_eq!(roots["roots"], serde_json::json!([root]));
+        assert!(e.request_scoped("other", scope, "", Action::Roots).is_err());
+        let other = e.context("other", &root, "codex").unwrap();
+        assert_eq!(
+            e.request_scoped("other", other, &root, Action::Roots)
+                .unwrap()["roots"],
+            serde_json::json!([])
+        );
+        let extra = Path::new(&root).join("extra");
+        fs::create_dir(&extra).unwrap();
+        let grant = e
+            .prepare_grant("main", scope, extra.to_str().unwrap())
+            .unwrap();
+        let label = e.finish_grant(grant, true).unwrap();
+        assert_eq!(
+            e.request_scoped("main", scope, "", Action::Roots).unwrap()["roots"],
+            serde_json::json!([root, label])
+        );
+        let revoked = e.revoke("main", scope).unwrap();
+        assert!(e.request_scoped("main", scope, "", Action::Roots).is_err());
+        assert_eq!(
+            e.request_scoped("main", revoked, "", Action::Roots)
+                .unwrap()["roots"],
+            serde_json::json!([])
+        );
+        assert!(e
+            .request_scoped("main", revoked, &root, Action::Authorize)
+            .is_err());
+        let fresh = Editor::default();
+        let scope = fresh.context("main", &root, "codex").unwrap();
+        assert_eq!(
+            fresh
+                .request_scoped("main", scope, "", Action::Roots)
+                .unwrap()["roots"],
+            serde_json::json!([])
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn folder_duplication_is_bounded_atomic_scoped_and_preserves_source() {
+        use std::os::unix::fs::symlink;
+        let (e, root) = fixture();
+        let base = Path::new(&root);
+        fs::create_dir_all(base.join("tree/nested/empty")).unwrap();
+        fs::write(base.join("tree/nested/data.bin"), [0, 255, 1]).unwrap();
+        fs::write(base.join("tree/readme.txt"), b"original").unwrap();
+        let duplicate = |source: &str, destination: &str| {
+            e.request(
+                "main",
+                &root,
+                Action::Duplicate {
+                    path: source.into(),
+                    destination: destination.into(),
+                },
+            )
+        };
+        duplicate("tree", "copied").unwrap();
+        assert!(base.join("copied/nested/empty").is_dir());
+        assert_eq!(
+            fs::read(base.join("copied/nested/data.bin")).unwrap(),
+            [0, 255, 1]
+        );
+        assert_eq!(fs::read(base.join("tree/readme.txt")).unwrap(), b"original");
+        fs::write(base.join("copied/readme.txt"), b"changed copy").unwrap();
+        assert!(duplicate("tree", "copied").is_err());
+        assert_eq!(
+            fs::read(base.join("copied/readme.txt")).unwrap(),
+            b"changed copy"
+        );
+        assert!(duplicate("tree", "tree/nested/copy").is_err());
+        assert!(duplicate("tree", "../escape").is_err());
+        symlink(base.join("tree/readme.txt"), base.join("tree/link")).unwrap();
+        assert_eq!(duplicate("tree", "with-link").unwrap_err().kind, "symlink");
+        assert!(!base.join("with-link").exists());
+        fs::remove_file(base.join("tree/link")).unwrap();
+        fs::create_dir(base.join("tree/.git")).unwrap();
+        assert_eq!(duplicate("tree", "with-metadata").unwrap_err().kind, "path");
+        assert!(!base.join("with-metadata").exists());
+        fs::remove_dir(base.join("tree/.git")).unwrap();
+        let oversized = File::create(base.join("tree/oversized")).unwrap();
+        oversized.set_len(LIMIT + 1).unwrap();
+        assert_eq!(
+            duplicate("tree", "oversized-copy").unwrap_err().kind,
+            "largeFile"
+        );
+        assert!(!base.join("oversized-copy").exists());
+        for mut budget in [
+            CopyBudget {
+                entries: 5000,
+                bytes: 0,
+            },
+            CopyBudget {
+                entries: 0,
+                bytes: 64 * 1024 * 1024,
+            },
+        ] {
+            assert_eq!(
+                copy_entry(
+                    &base.join("tree/readme.txt"),
+                    &base.join("over-budget"),
+                    &mut budget,
+                    0
+                )
+                .unwrap_err()
+                .kind,
+                "copyLimit"
+            );
+            assert!(!base.join("over-budget").exists());
+        }
+        assert_eq!(
+            copy_entry(
+                &base.join("tree"),
+                &base.join("too-deep"),
+                &mut CopyBudget::default(),
+                33
+            )
+            .unwrap_err()
+            .kind,
+            "copyLimit"
+        );
+        assert!(fs::read_dir(base).unwrap().all(|entry| !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".corpstex-save-")));
         fs::remove_dir_all(root).unwrap();
     }
     #[test]

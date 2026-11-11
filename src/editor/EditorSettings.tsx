@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { authorize, defaults, getEditor, invoke, message, presets, resolveOptions, sanitizeOptions, saveSettings, useEditor, type Options, type ServerConfig } from './state';
+import { authorize, defaults, getEditor, invoke, message, parseLanguageMappings, presets, resolveOptions, sanitizeOptions, saveSettings, useEditor, type Options, type ServerConfig } from './state';
 
 type InstallPlan = {executable:string;args:string[];directory:string;serverPath:string;packages:string[];installedPackages:string[];previousPackages:string[]};
 
@@ -7,6 +7,7 @@ export function EditorSettings({root}:{root:string}){
   const {settings}=useEditor();const [scope,setScope]=useState('global');const [profile,setProfile]=useState('');const [feedback,setFeedback]=useState('');
   const [section,setSection]=useState('preferences');const [discovery,setDiscovery]=useState<{executable:string;path:string|null}[]>([]);
   const [config,setConfig]=useState<ServerConfig>({...presets[0]});const [args,setArgs]=useState(JSON.stringify(config.args));const [busy,setBusy]=useState(false);const [running,setRunning]=useState<string[]>([]);
+  const [mappingText,setMappingText]=useState(()=>JSON.stringify(settings.languageMappings??{},null,2));
   const [managed,setManaged]=useState<InstallPlan|null>(null);
   useEffect(()=>{let gone=false;setManaged(null);if(['typescript','python','json','yaml'].includes(config.id))void invoke<InstallPlan>('editor_install_plan',{id:config.id}).then(plan=>{if(!gone)setManaged(plan);}).catch(()=>{});return()=>{gone=true;};},[config.id,busy]);
   useEffect(()=>{let gone=false;const timer=setInterval(()=>{void import('./monaco').then(m=>{if(!gone)setRunning([...m.servers.values()].filter(s=>s.root===root).map(s=>s.config.id));});},1200);return()=>{gone=true;clearInterval(timer);};},[root]);
@@ -53,7 +54,7 @@ export function EditorSettings({root}:{root:string}){
     <h2 id="editor-settings-title">Editor</h2>
     <div className="editor-settings-tabs"><button type="button" aria-pressed={section==='preferences'} onClick={()=>setSection('preferences')}>Preferences</button><button type="button" aria-pressed={section==='servers'} onClick={()=>setSection('servers')}>Language Servers</button></div>
     {section==='preferences'?<>
-      <p>Project overrides → active profile → global defaults. Manual saving only. File buffers and cursor positions stay in memory; crash recovery is disabled by D11.</p>
+      <p>Project overrides → active profile → global defaults. Manual saving only. File text stays in memory. Recovery stores only tab paths, layout and cursor/view metadata, requires confirmation, and cannot recover unsaved text or folder access.</p>
       <label className="settings-field">Active profile<select value={settings.activeProfile} onChange={e=>saveSettings({...settings,activeProfile:e.target.value})}><option value="">Global defaults</option>{Object.keys(settings.profiles).map(p=><option key={p}>{p}</option>)}</select></label>
       <form onSubmit={e=>{e.preventDefault();if(/^[\w -]{1,60}$/.test(profile)&&!['__proto__','constructor','prototype'].includes(profile)){saveSettings({...settings,profiles:{...settings.profiles,[profile]:{}},activeProfile:profile});setProfile('');}else setFeedback('Use 1–60 letters, numbers, spaces, underscores or dashes for the profile name.');}}><label>New profile<input value={profile} onChange={e=>setProfile(e.target.value)} maxLength={60}/></label><button type="submit">Create profile</button></form>
       <label className="settings-field">Edit scope<select value={scope} onChange={e=>setScope(e.target.value)}><option value="global">Global defaults</option><option value="profile" disabled={!settings.activeProfile}>Active profile</option><option value="project" disabled={!root}>Project: {root||'none selected'}</option></select></label>
@@ -63,6 +64,9 @@ export function EditorSettings({root}:{root:string}){
       <label className="settings-field">Font size<input type="number" min={8} max={40} value={options.fontSize} onChange={e=>{const n=Number(e.target.value);if(n>=8&&n<=40)change({fontSize:n});}}/></label>
       <label className="settings-field">Indent width<select value={options.tabSize} onChange={e=>change({tabSize:Number(e.target.value)})}>{[1,2,3,4,6,8].map(n=><option key={n}>{n}</option>)}</select></label>
       {([['ligatures','Font ligatures'],['insertSpaces','Indent with spaces'],['minimap','Minimap'],['wrap','Word wrapping'],['preview','Open files as preview tabs']] as const).map(([k,label])=><label className="settings-field" key={k}>{label}<input type="checkbox" checked={options[k]} onChange={e=>change({[k]:e.target.checked})}/></label>)}
+      <label className="settings-field">File extension mappings (JSON)<textarea aria-label="File extension mappings" value={mappingText} rows={4} onChange={e=>setMappingText(e.target.value)} placeholder={'{"svelte":"svelte","astro":"html"}'}/></label>
+      <p>Application-wide extension → Monaco language ID overrides, without the leading dot. Custom IDs support compatible configured servers; syntax highlighting requires an existing Monaco language.</p>
+      <button type="button" onClick={()=>{try{const mappings=parseLanguageMappings(JSON.parse(mappingText));if(!mappings)throw new Error();saveSettings({...getEditor().settings,languageMappings:mappings});setFeedback('Language mappings saved. Open models update; language servers remain manually started.');}catch{setFeedback('Use a JSON object with up to 200 lowercase extensions and language IDs.');}}}>Save language mappings</button>
       <button type="button" onClick={()=>{if(scope==='project'){const projects={...settings.projects};delete projects[root];saveSettings({...settings,projects});}else if(scope==='profile'){saveSettings({...settings,profiles:{...settings.profiles,[settings.activeProfile]:{}}});}else saveSettings({...settings,global:{...defaults}});}}>Reset this scope to inherited defaults</button>
     </>:<>
       <h3>Language Servers</h3><p>Servers run independently of Codex and OpenCode. Nothing starts or downloads automatically. Configuration changes require Stop, then Start. Diagnostics use UTF-16 positions.</p>

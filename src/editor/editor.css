@@ -65,5 +65,8 @@
 
 .session-workspace .file-explorer { padding:.65rem; }
 .file-explorer .thread-actions { padding:0; }
-.file-explorer input { box-sizing:border-box; width:100%; min-width:0; border:1px solid var(--color-border); border-radius:.35rem; background:var(--color-surface); color:var(--color-text); padding:.45rem .55rem; font:inherit; font-size:.75rem; }
+.file-explorer input,.file-explorer select { box-sizing:border-box; width:100%; min-width:0; border:1px solid var(--color-border); border-radius:.35rem; background:var(--color-surface); color:var(--color-text); padding:.45rem .55rem; font:inherit; font-size:.75rem; }
 .file-explorer .panel-heading { padding:.25rem 0; }
+
+.editor-recovery { position:absolute; z-index:16; top:3rem; right:1rem; max-width:min(90%,32rem); max-height:60vh; overflow:auto; border:1px solid var(--color-border); border-radius:.4rem; box-shadow:0 4px 24px #0005; }
+.editor-recovery button { margin:.25rem .5rem .25rem 0; }

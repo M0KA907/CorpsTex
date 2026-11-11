@@ -11,11 +11,15 @@ export {monaco};
 export const canonicalFileUri=(root:string,path='')=>monaco.Uri.parse(fileUri(root,path)).toString();
 const canonicalUri=(uri:string)=>monaco.Uri.parse(uri).toString();
 const models=new Map<string,monaco.editor.ITextModel>();
+function ensureLanguage(id:string){if(!monaco.languages.getLanguages().some(l=>l.id===id))monaco.languages.register({id});}
+export function refreshModelLanguage(model:monaco.editor.ITextModel,path:string){const id=language(path);ensureLanguage(id);if(model.getLanguageId()!==id)monaco.editor.setModelLanguage(model,id);}
 export function modelFor(file:FileTab):monaco.editor.ITextModel{
   let model=models.get(file.id);
-  if(!model){model=monaco.editor.createModel(file.text,language(file.path),monaco.Uri.parse(canonicalFileUri(file.root,file.path)));models.set(file.id,model);for(const server of servers.values())attach(server,model);}
-  return model;
+  if(model&&model.uri.toString()!==canonicalFileUri(file.root,file.path)){model.dispose();models.delete(file.id);model=undefined;}
+  if(!model){ensureLanguage(language(file.path));model=monaco.editor.createModel(file.text,language(file.path),monaco.Uri.parse(canonicalFileUri(file.root,file.path)));models.set(file.id,model);const created=model;model.onDidChangeLanguage(()=>{for(const server of servers.values()){detach(server,created);attach(server,created);}});for(const server of servers.values())attach(server,model);}
+  refreshModelLanguage(model,file.path);return model;
 }
+window.addEventListener('corpstex-editor-language-mappings',()=>{for(const file of getEditor().files){const model=models.get(file.id);if(model)refreshModelLanguage(model,file.path);}});
 export function disposeClosedModels(ids:Set<string>){for(const [id,model] of models){if(!ids.has(id)){model.dispose();models.delete(id);}}}
 monaco.editor.registerEditorOpener({openCodeEditor:async(_source,resource,selection)=>{
   const root=getEditor().files.find(f=>resource.toString().startsWith(canonicalFileUri(f.root)+'/'))?.root;
@@ -46,11 +50,13 @@ function send(s:Running,method:string,params:unknown,fullTextUri?:string){
   s.queue.enqueue(method,params,fullTextUri);
 }
 async function request(s:Running,method:string,params:unknown){await s.queue.flush();return s.invoke<any>('editor_lsp_request',{root:s.root,id:s.config.id,method,params});}
+function detach(s:Running,model:monaco.editor.ITextModel){const uri=model.uri.toString();const subscriptions=s.models.get(uri);if(!subscriptions)return;send(s,'textDocument/didClose',{textDocument:{uri}});for(const subscription of subscriptions)subscription.dispose();s.models.delete(uri);monaco.editor.setModelMarkers(model,s.config.id,[]);}
 function attach(s:Running,model:monaco.editor.ITextModel){
   if(!match(s,model)||s.models.has(model.uri.toString())||model.getValueLength()>2*1024*1024||getEditor().files.some(f=>f.large&&canonicalFileUri(f.root,f.path)===model.uri.toString()))return;
   const uri=model.uri.toString();const sync=s.cap.textDocumentSync;const kind=typeof sync==='number'?sync:sync?.change;
   send(s,'textDocument/didOpen',{textDocument:{uri,languageId:model.getLanguageId(),version:model.getVersionId(),text:model.getValue()}});
   const change=model.onDidChangeContent(event=>{
+    if(model.getValueLength()>2*1024*1024||getEditor().files.some(f=>f.large&&canonicalFileUri(f.root,f.path)===model.uri.toString())){detach(s,model);notice('Large file mode: language-server synchronization detached for this buffer. Your edits are retained; other files remain connected.');return;}
     if(kind===0)return;
     send(s,'textDocument/didChange',{textDocument:{uri,version:model.getVersionId()},contentChanges:kind===2?event.changes.map(c=>({range:lspRange(c.range),rangeLength:c.rangeLength,text:c.text})):[{text:model.getValue()}]},kind===2?undefined:uri);
   });
