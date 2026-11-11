@@ -7,12 +7,18 @@
     <meta name="theme-color" content="#262624" />
     <title>CorpsTex</title>
     <style id="corpstex-editor-style-nonce">/* Tauri supplies this stylesheet nonce to Monaco. */</style>
+    <script src="/startup-theme.js"></script>
   </head>
   <body>
     <div id="root">
-      <h1>CorpsTex</h1>
-      <p>Codex disconnected. The desktop shell is loading.</p>
-      <noscript>JavaScript is required to display the workspace. No Codex process has been started.</noscript>
+      <main class="startup" aria-labelledby="startup-title">
+        <div class="startup-content">
+          <svg class="startup-mark" viewBox="0 0 120 92" fill="none" stroke="currentColor" stroke-width="7" stroke-linecap="square" aria-hidden="true"><path d="M67 20C58 11 45 10 33 15C5 27 5 65 33 77C45 82 58 81 67 72"/><path d="M104 12L79 80"/></svg>
+          <h1 id="startup-title">CorpsTex</h1>
+          <p>The desktop workspace is loading. If it does not open, close and reopen CorpsTex.</p>
+          <noscript>JavaScript is required to display the workspace. No agent runtime is started by this screen.</noscript>
+        </div>
+      </main>
     </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

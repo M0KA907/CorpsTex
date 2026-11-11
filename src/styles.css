@@ -543,10 +543,10 @@ input:hover, textarea:hover, select:hover { border-color: var(--color-muted); }
 .shell[data-reading-width="wide"] { --reading-width: 72rem; }
 .shell[data-density="compact"] { --workspace-gutter: 0.875rem; --space-6: 1rem; --space-8: 1.5rem; }
 .shell[data-density="compact"] .message { margin-bottom: 1rem; }
-.shell[data-accent="mint"] { --color-accent: #63b287; --color-accent-ink: #9cd5bc; --color-accent-hover: #74c49a; --color-focus: #b7dcc9; }
-.shell[data-accent="blue"] { --color-accent: #6c92c8; --color-accent-ink: #a8c6ec; --color-accent-hover: #7fa6d8; --color-focus: #c3d8f2; }
-.shell[data-palette="midnight"] { --color-canvas: #1b1f27; --color-surface: #232833; --color-raised: #2c313e; --color-overlay: #353b4a; --color-border: #454c5d; --color-border-soft: #383e4d; --color-glass-panel: #1b1f27e6; --color-glass-raised: #232833f7; }
-.shell[data-palette="forest"] { --color-canvas: #1d211c; --color-surface: #242a22; --color-raised: #2d342a; --color-overlay: #363d32; --color-border: #454d40; --color-border-soft: #3a4236; --color-glass-panel: #1d211ce6; --color-glass-raised: #242a22f7; }
+:is(:root, .shell)[data-accent="mint"] { --color-accent: #63b287; --color-accent-ink: #9cd5bc; --color-accent-hover: #74c49a; --color-focus: #b7dcc9; }
+:is(:root, .shell)[data-accent="blue"] { --color-accent: #6c92c8; --color-accent-ink: #a8c6ec; --color-accent-hover: #7fa6d8; --color-focus: #c3d8f2; }
+:is(:root, .shell)[data-palette="midnight"] { --color-canvas: #1b1f27; --color-surface: #232833; --color-raised: #2c313e; --color-overlay: #353b4a; --color-border: #454c5d; --color-border-soft: #383e4d; --color-glass-panel: #1b1f27e6; --color-glass-raised: #232833f7; }
+:is(:root, .shell)[data-palette="forest"] { --color-canvas: #1d211c; --color-surface: #242a22; --color-raised: #2d342a; --color-overlay: #363d32; --color-border: #454d40; --color-border-soft: #3a4236; --color-glass-panel: #1d211ce6; --color-glass-raised: #242a22f7; }
 
 /* Saved effects are scoped to the shell; trusted approvals retain their own styles. */
 .appearance-group { min-width:0; margin:.25rem 0; padding:0; border:0; }

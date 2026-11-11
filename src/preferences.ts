@@ -1,5 +1,5 @@
 import type { ActivityPreset } from './ActivityBar';
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useState } from 'react';
 
 export type Preferences = {
   showApprovalCenter: boolean;
@@ -35,6 +35,10 @@ export function usePreferences() {
     try { return parsePreferences(typeof window === 'undefined' ? null : localStorage.getItem(storageKey)); } catch { return {...defaults}; }
   });
   const [storageError, setStorageError] = useState('');
+  useLayoutEffect(() => {
+    document.documentElement.dataset.palette = preferences.palette;
+    document.documentElement.dataset.accent = preferences.accent;
+  }, [preferences.palette, preferences.accent]);
   useEffect(() => {
     function sync(event: StorageEvent) { if (event.key === storageKey || event.key === null) setPreferences(parsePreferences(event.newValue)); }
     window.addEventListener('storage', sync);

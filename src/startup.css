@@ -1,0 +1,25 @@
+.startup {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  overflow: auto;
+  padding: clamp(1.5rem, 6vw, 4rem);
+  background: var(--color-canvas);
+  color: var(--color-text);
+}
+.startup-content { width: min(100%, 32rem); margin: auto; text-align: center; }
+.startup-mark { width: clamp(5rem, 15vw, 7.5rem); height: auto; color: var(--color-accent-ink); margin-bottom: 2rem; }
+.startup h1 { font: 500 clamp(1.5rem, 5vw, 2.25rem)/1.2 var(--font-ui); letter-spacing: -.035em; margin: 0 0 2rem; }
+.startup p { color: var(--color-muted); }
+.startup button { min-height: 2.75rem; padding: .75rem 1.5rem; }
+.startup .startup-start { background: var(--color-accent); color: var(--color-on-accent); border-color: var(--color-accent); }
+.startup-start span { margin-left: 1.5rem; }
+.startup button:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 5px; }
+.startup .startup-note { font-size: var(--text-sm); margin-top: 1.5rem; }
+.startup[data-phase="loading"] .startup-mark path { animation: startup-draw 900ms var(--ease-out) both; }
+@keyframes startup-draw { from { stroke-dasharray: 1; stroke-dashoffset: 1; } to { stroke-dasharray: 1; stroke-dashoffset: 0; } }
+.shell[data-motion="reduced"] .startup-mark path { animation: none; }
+@media (prefers-reduced-motion: reduce) { .startup-mark path { animation: none !important; } }
+.startup-workspace { display: contents; }

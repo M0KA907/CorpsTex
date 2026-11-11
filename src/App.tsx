@@ -1,3 +1,4 @@
+import { Startup, useWelcome } from './Startup';
 import { FolderBrowser } from './FolderBrowser';
 import { Diagnostics } from './Diagnostics';
 import { diagnostics, isEditorCancellation } from './diagnostics';
@@ -170,6 +171,15 @@ export default function App() {
   useEffect(()=>{if(invalidRoot||failure)setProjectPickerOpen(true);},[invalidRoot,failure]);
   useEffect(()=>{if(projectPickerOpen)requestAnimationFrame(()=>{if(invalidRoot||failure)rootInput.current?.focus();else document.querySelector<HTMLInputElement>('[aria-label="Find a project"]')?.focus();});},[projectPickerOpen,invalidRoot,failure]);
   const [pollFailure, setPollFailure] = useState('');
+  const [startup, setStartup] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [startupAttempt, setStartupAttempt] = useState(0);
+  const welcome = useWelcome();
+  const startupSuppressed = view.exitRequested || view.approvals.length > 0 || view.projects.some(project => project.activeTurns > 0 || project.pendingRequests > 0 || project.uncertain);
+  const showStartup = !startupSuppressed && (startup !== 'ready' || welcome.open);
+  function finishWelcome() {
+    welcome.finish();
+    requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('.settings-launcher')?.focus());
+  }
   const [restart, setRestart] = useState<Project | null>(null);
   const [selectedRoot, setSelectedRoot] = useState('');
   useEffect(() => {
@@ -178,8 +188,10 @@ export default function App() {
     }
   }, []);
   useEffect(() => {
-    if (!(window as DesktopWindow).__TAURI__) return;
+    if (!(window as DesktopWindow).__TAURI__) { setStartup('error'); return; }
     let disposed = false; let inFlight = false;
+    // A deadline reports a stalled bridge; it never delays a successful launch.
+    const deadline = window.setTimeout(() => { if (!disposed) setStartup(previous => previous === 'ready' ? previous : 'error'); }, 10000);
     async function refresh() {
       if (inFlight) return;
       inFlight = true;
@@ -188,16 +200,22 @@ export default function App() {
         if (!disposed) {
           const keys = new Set(next.approvals.map(a=>JSON.stringify([a.runtime ?? 'codex',a.root,a.generation,a.ticket])));
           for (const key of resolvedApprovals.current) if (!keys.has(key)) resolvedApprovals.current.delete(key);
+          window.clearTimeout(deadline);
+          setStartup('ready');
           setView({...next,approvals:next.approvals.filter(a=>!resolvedApprovals.current.has(JSON.stringify([a.runtime ?? 'codex',a.root,a.generation,a.ticket])))}); setPollFailure('');
         }
       } catch {
-        if (!disposed) setPollFailure('Project status is unavailable. Keep the application open until its server state can be checked.');
+        if (!disposed) {
+          window.clearTimeout(deadline);
+          setStartup(previous => previous === 'ready' ? previous : 'error');
+          setPollFailure('Project status is unavailable. Keep the application open until its server state can be checked.');
+        }
       } finally { inFlight = false; }
     }
     void refresh();
     const timer = window.setInterval(() => { void refresh(); }, 500);
-    return () => { disposed = true; window.clearInterval(timer); };
-  }, []);
+    return () => { disposed = true; window.clearInterval(timer); window.clearTimeout(deadline); };
+  }, [startupAttempt]);
   async function connect(project?: Project, chosenRoot?: string) {
     const validation = validateProjectRoot(project?.root ?? chosenRoot ?? root);
     if (validation) {
@@ -246,6 +264,7 @@ export default function App() {
   }
   return <>
     <div className="shell" inert={view.exitRequested} data-palette={preferences.palette} data-accent={preferences.accent} data-density={preferences.density} data-text-size={preferences.textSize} data-reading-width={preferences.width} data-motion={preferences.motion} data-background={preferences.background} data-texture={preferences.texture} data-surfaces={preferences.surfaces} data-sidebar={sidebarOpen ? 'open' : 'collapsed'}>
+      <div className="startup-workspace" inert={showStartup}>
       <a className="skip-link" href="#workspace" onClick={event=>{event.preventDefault();document.querySelector<HTMLElement>('.session-focused .workspace')?.focus();}}>Skip to workspace</a>
       <header className="app-header">
         <button className="sidebar-toggle" type="button" aria-expanded={sidebarOpen} aria-label={sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'} title="Toggle sidebar (Ctrl+B)" onClick={()=>setSidebarOpen(open=>!open)}><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M9.5 4v16"/></svg></button>
@@ -259,7 +278,7 @@ export default function App() {
         </p>}
       </header>
 
-      <SessionWorkspace workspaceRoot={selectedRoot || activeProject?.root || ''} workspaceProjects={view.projects} onActivate={(next,path)=>{setRuntime(next);setSelectedRoot(path);setRoot(path);}} timelineProjects={view.projects} runtime={runtime} onChooseProject={()=>setBrowserOpen(true)} settingsOpen={settingsOpen && !view.exitRequested} onCloseSettings={()=>setSettingsOpen(false)} preferences={preferences} onPreferences={onPreferences} storageError={storageError} approvals={view.approvals} approvalBusy={approvalBusy} approvalInvoke={approvalInvoke} exiting={view.exitRequested} project={activeProject} connect={() => connect()} invoke={invoke} errorText={errorText} runtimeControls={<RuntimePicker value={runtime} disabled={connecting||view.exitRequested} counts={{codex:view.projects.filter(p=>(p.runtime??'codex')==='codex'&&p.status==='ready').length,opencode:view.projects.filter(p=>p.runtime==='opencode'&&p.status==='ready').length}} onChange={next=>void chooseRuntime(next)}/>} controls={<><button className="choose-project" type="button" aria-expanded={projectPickerOpen} aria-controls="project-picker" title={activeRoot || 'Choose project folder'} disabled={connecting||starting} onClick={()=>setProjectPickerOpen(open=>!open)}><span>Project</span><strong>{activeRoot.split(/[\\/]/).filter(Boolean).at(-1)||'Choose folder'}</strong><span aria-hidden="true">⌄</span></button>
+      <SessionWorkspace onShowWelcome={()=>{setSettingsOpen(false);welcome.show();}} workspaceRoot={selectedRoot || activeProject?.root || ''} workspaceProjects={view.projects} onActivate={(next,path)=>{setRuntime(next);setSelectedRoot(path);setRoot(path);}} timelineProjects={view.projects} runtime={runtime} onChooseProject={()=>setBrowserOpen(true)} settingsOpen={settingsOpen && !view.exitRequested} onCloseSettings={()=>setSettingsOpen(false)} preferences={preferences} onPreferences={onPreferences} storageError={storageError} approvals={view.approvals} approvalBusy={approvalBusy} approvalInvoke={approvalInvoke} exiting={view.exitRequested} project={activeProject} connect={() => connect()} invoke={invoke} errorText={errorText} runtimeControls={<RuntimePicker value={runtime} disabled={connecting||view.exitRequested} counts={{codex:view.projects.filter(p=>(p.runtime??'codex')==='codex'&&p.status==='ready').length,opencode:view.projects.filter(p=>p.runtime==='opencode'&&p.status==='ready').length}} onChange={next=>void chooseRuntime(next)}/>} controls={<><button className="choose-project" type="button" aria-expanded={projectPickerOpen} aria-controls="project-picker" title={activeRoot || 'Choose project folder'} disabled={connecting||starting} onClick={()=>setProjectPickerOpen(open=>!open)}><span>Project</span><strong>{activeRoot.split(/[\\/]/).filter(Boolean).at(-1)||'Choose folder'}</strong><span aria-hidden="true">⌄</span></button>
         <div id="project-picker" className="project-picker" hidden={!projectPickerOpen} onKeyDown={event=>{if(event.key==='Escape'){setProjectPickerOpen(false);event.currentTarget.previousElementSibling instanceof HTMLElement && event.currentTarget.previousElementSibling.focus();}}}>
           <input type="search" aria-label="Find a project" placeholder="Find a project…" value={projectSearch} onChange={event=>setProjectSearch(event.target.value)}/>
           <nav aria-label="Projects">{view.projects.filter(project=>`${project.root} ${project.runtime??'codex'}`.toLowerCase().includes(projectSearch.toLowerCase())).map(project=><button type="button" key={`${project.runtime}:${project.root}`} aria-current={activeProject?.root===project.root&&(project.runtime??'codex')===runtime?'page':undefined} onClick={()=>{setRuntime(project.runtime??'codex');setSelectedRoot(project.root);setRoot(project.root);try { localStorage.setItem('corpstex.lastProject',project.root); } catch {} setProjectPickerOpen(false);setProjectSearch('');}}><strong>{project.root.split(/[\\/]/).filter(Boolean).at(-1)||project.root}</strong><small>{project.root}</small><span>{project.runtime??'codex'}{project.status==='ready'?'':project.status==='starting'?' · Connecting…':project.status==='failed'?' · Connection lost':' · Stopped'}</span></button>)}</nav>
@@ -287,6 +306,9 @@ export default function App() {
         <span>{selectedRoot || root || 'No project connected'}</span>
       </footer>
     {browserOpen && !view.exitRequested && <FolderBrowser initialPath={activeRoot} onClose={()=>setBrowserOpen(false)} onSelect={path=>{setRoot(path);setBrowserOpen(false);void connect(undefined,path);}} invoke={invoke} errorText={errorText}/> }
+      </div>
+      {showStartup && <Startup phase={startup === 'ready' ? 'welcome' : startup} error={typeof window === 'undefined' || (window as DesktopWindow).__TAURI__ ? 'The desktop status could not be read. Retry to check the workspace. No runtime connection is required.' : 'Open the CorpsTex desktop application to use your workspace.'} storageError={welcome.error} onRetry={()=>{setStartup('loading');setStartupAttempt(attempt=>attempt+1);}} onStart={finishWelcome}/>}
+      {!showStartup && welcome.error && <p className="global-error" role="status">{welcome.error}</p>}
     </div>
     <ApprovalCenter enabled={preferences.showApprovalCenter} approvals={view.approvals} exiting={view.exitRequested} busyKeys={approvalBusy} invoke={approvalInvoke} errorText={errorText} />
     {view.exitRequested && <ShutdownDialog projects={view.exitProjects} onCancel={cancelExit} onConfirm={confirmExit} />}
@@ -320,3 +342,5 @@ export { LspNotificationQueue } from './editor/lspQueue';
 export { createDiagnostics, diagnosticsPrompt, isEditorCancellation } from './diagnostics';
 
 export { parseEditorSession, serializeEditorSession, editorSessionKey } from './editor/recovery';
+
+export { Startup, readWelcome, completeWelcome, welcomeKey } from './Startup';
