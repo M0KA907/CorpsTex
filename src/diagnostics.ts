@@ -5,6 +5,11 @@ type Context = {runtime:Runtime;project:string;generation:number|null;state:Stat
 type Event = Context & {at:string;operation:string;kind:string};
 export type Diagnostic = Event & {id:number;firstSeen:string;lastSeen:string;count:number;significant:boolean;dismissed:boolean;code:number|null;related:Event[]};
 type Snapshot = {entries:Diagnostic[];omitted:number};
+// Monaco 0.56 uses this exact Error signature for normal cancellation, including
+// its WebKit clipboard workaround when a later gesture supersedes a write.
+export function isEditorCancellation(error:unknown):boolean {
+  return error instanceof Error && error.name==='Canceled' && error.message==='Canceled';
+}
 const commands = new Set(['project_view','connect_project','conversation_request','conversation_view','project_events','approval_reply','default_project_root','cancel_exit','confirm_exit','editor_request','editor_lsp_request','editor_install','editor_install_plan','editor_dirty','editor_exit_pending','reconnect_opencode','frontend']);
 const actions = new Set(['send','steer','interrupt','resume','newThread','listThreads','listAllThreads','listArchivedThreads','listModels','listSkills','readSettings','readRequirements','writeSettings','listMcpStatus','fork','archive','unarchive','rename','compact','review']);
 const significantKinds = new Set(['missingExecutable','openCodeUnavailable','unsupportedVersion','spawn','transport','malformedMessage','messageTooLarge','unsupportedProtocol','serverExit','timeout','bridge','frontendError']);

@@ -1,6 +1,6 @@
 import { FolderBrowser } from './FolderBrowser';
 import { Diagnostics } from './Diagnostics';
-import { diagnostics } from './diagnostics';
+import { diagnostics, isEditorCancellation } from './diagnostics';
 import { usePreferences } from './preferences';
 import { ApprovalCenter, ApprovalCard } from './Approvals';
 import type { Approval } from './Approvals';
@@ -118,8 +118,9 @@ export function ShutdownDialog({ projects, onCancel, onConfirm }: { projects: Pr
 
 export default function App() {
   useEffect(()=>{
-    const report=()=>diagnostics.failure('frontend',undefined,{kind:'frontendError'});
-    const reportError=(event:ErrorEvent)=>{if(event.error)report();};
+    const failure=()=>diagnostics.failure('frontend',undefined,{kind:'frontendError'});
+    const report=(event:PromiseRejectionEvent)=>{if(isEditorCancellation(event.reason)){event.preventDefault();return;}failure();};
+    const reportError=(event:ErrorEvent)=>{if(event.error)failure();};
     window.addEventListener('error',reportError);window.addEventListener('unhandledrejection',report);
     return()=>{window.removeEventListener('error',reportError);window.removeEventListener('unhandledrejection',report);};
   },[]);
@@ -316,6 +317,6 @@ export { McpStatusView } from './McpStatus';
 
 export { groupThreads, threadTime, ConversationLibrary } from './ConversationLibrary';
 export { LspNotificationQueue } from './editor/lspQueue';
-export { createDiagnostics, diagnosticsPrompt } from './diagnostics';
+export { createDiagnostics, diagnosticsPrompt, isEditorCancellation } from './diagnostics';
 
 export { parseEditorSession, serializeEditorSession, editorSessionKey } from './editor/recovery';

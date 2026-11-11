@@ -88,7 +88,7 @@ function QueueDialog({ approvals, onClose, invoke, errorText, busyKeys }: { appr
   }
   return <dialog ref={dialog} aria-labelledby="approvals-title" onCancel={event => { event.preventDefault(); onClose(); }} onClose={event => { if (!event.currentTarget.open) onClose(); }}>
     <header><div><p className="eyebrow">CORPSTEX · TRUSTED CONTROLS</p><h1 id="approvals-title">Approval center</h1></div><button type="button" autoFocus onClick={onClose}>Close</button></header>
-    <p className="shortcut-hint">Ctrl+A to toggle · Escape to close</p>
+    <p className="shortcut-hint">Escape to close</p>
     <p>All active projects · {approvals.length} outstanding requests. Closing this panel sends no response.</p>
     <p role="status">{feedback}</p>
     <nav aria-label="Outstanding requests">{approvals.map(a => <button type="button" key={identity(a)} disabled={busy} aria-pressed={identity(a) === selected} onClick={() => { setSelected(identity(a)); setFeedback(''); }}>{a.root} · {a.request.method} · {a.key}{clientBound[a.request.method] ? ' · cannot answer' : ''}{a.status !== 'ready' ? ` · ${a.status}` : ''}</button>)}</nav>
@@ -110,20 +110,11 @@ export function ApprovalCenter({ enabled = true, approvals, exiting, invoke, err
     }
   }, []);
   useEffect(() => { if (exiting || !enabled) setOpen(false); }, [exiting, enabled]);
-  useEffect(() => {
-    function shortcut(event: KeyboardEvent) {
-      if (!enabled || exiting || event.isComposing || event.repeat || !event.ctrlKey || event.altKey || event.metaKey || event.shiftKey || event.key.toLowerCase() !== 'a') return;
-      event.preventDefault();
-      setOpen(previous => !previous);
-    }
-    window.addEventListener('keydown', shortcut, true);
-    return () => window.removeEventListener('keydown', shortcut, true);
-  }, [exiting, enabled]);
   return <>
     {enabled && !shadow && <button type="button" disabled>Approvals · {approvals.length}</button>}
     <div ref={host} data-approval-controls />
     {shadow && createPortal(<><link rel="stylesheet" href={stylesheet} />
-      {enabled && <button className="launcher" data-pending={approvals.some(a => a.status === 'ready') && !exiting} type="button" aria-keyshortcuts="Control+A" aria-expanded={open && !exiting} title="Approval center (Ctrl+A)" disabled={exiting} onClick={() => setOpen(true)}>Approvals · {approvals.length}</button>}
+      {enabled && <button className="launcher" data-pending={approvals.some(a => a.status === 'ready') && !exiting} type="button" aria-expanded={open && !exiting} title="Approval center" disabled={exiting} onClick={() => setOpen(true)}>Approvals · {approvals.length}</button>}
       <span className="sr-only" role="status">{approvals.filter(a => a.status === 'ready').length} requests awaiting review across all projects</span>
       {enabled && open && !exiting && <QueueDialog busyKeys={busyKeys} approvals={approvals} onClose={() => setOpen(false)} invoke={invoke} errorText={errorText} />}
     </>, shadow)}

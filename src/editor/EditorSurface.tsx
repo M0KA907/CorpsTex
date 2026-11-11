@@ -27,10 +27,12 @@ function LoadedSurface({file}:{file:FileTab}){
       const options=resolveOptions(getEditor().settings,current.current.root);
       for(const [name,data] of Object.entries(getEditor().settings.themes))try{monaco.editor.defineTheme(name,data as Monaco.editor.IStandaloneThemeData);}catch{notice(`Theme ${name} is invalid.`);}
       const model=modelFor(current.current);if(model.getValue()!==current.current.text)model.setValue(current.current.text);
-      let diff:Monaco.editor.IStandaloneDiffEditor|undefined;let original:Monaco.editor.ITextModel|undefined;
+      let diff:Monaco.editor.IStandaloneDiffEditor|undefined;let original:Monaco.editor.ITextModel|undefined;let labelSubscriptions:Monaco.IDisposable[]=[];
       const config={readOnly:Boolean(current.current.managing),automaticLayout:true,theme:options.theme,fontSize:options.fontSize,fontFamily:options.fontFamily,fontLigatures:options.ligatures,minimap:{enabled:!file.large&&options.minimap},wordWrap:options.wrap?'on' as const:'off' as const,scrollBeyondLastLine:false,accessibilitySupport:'auto' as const,ariaLabel:`Source editor: ${file.path}`,renderWhitespace:'selection' as const,largeFileOptimizations:true};
       if(file.conflict){
-        original=monaco.editor.createModel(file.conflict.text,language(file.path));diff=monaco.editor.createDiffEditor(host.current,{...config,originalEditable:false,renderSideBySide:window.innerWidth>=900,maxComputationTime:3000});diff.setModel({original,modified:model});editor.current=diff.getModifiedEditor();
+        original=monaco.editor.createModel(file.conflict.text,language(file.path));diff=monaco.editor.createDiffEditor(host.current,{...config,originalAriaLabel:`Disk version: ${file.path}`,modifiedAriaLabel:`Source editor: ${file.path}`,originalEditable:false,renderSideBySide:window.innerWidth>=900,maxComputationTime:3000});diff.setModel({original,modified:model});editor.current=diff.getModifiedEditor();
+        // Repair labels after Monaco finishes resetting a diff sub-editor's options.
+        labelSubscriptions=([[diff.getOriginalEditor(),`Disk version: ${file.path}`],[diff.getModifiedEditor(),`Source editor: ${file.path}`]] as const).map(([target,ariaLabel])=>{const enforce=()=>queueMicrotask(()=>{if(!disposed&&target.getOption(monaco.editor.EditorOption.ariaLabel)!==ariaLabel)target.updateOptions({ariaLabel});});const subscription=target.onDidChangeConfiguration(event=>{if(event.hasChanged(monaco.editor.EditorOption.ariaLabel))enforce();});enforce();return subscription;});
       }else editor.current=monaco.editor.create(host.current,{...config,model});
       model.updateOptions({tabSize:options.tabSize,insertSpaces:options.insertSpaces});
       const code=editor.current;const savedView=views.get(file.id);code.restoreViewState(savedView??null);
@@ -42,7 +44,7 @@ function LoadedSurface({file}:{file:FileTab}){
       const cursor=code.onDidChangeCursorPosition(event=>{updateFile(file.id,{cursor:event.position});setPosition(`Ln ${event.position.lineNumber}, Col ${event.position.column}`);});
       code.addCommand(monaco.KeyMod.CtrlCmd|monaco.KeyCode.KeyS,()=>void saveFile(file.id));
       if(document.activeElement?.getAttribute('role')!=='tab')code.focus();setLoading(false);
-      cleanup=()=>{views.set(file.id,code.saveViewState());captureView();change.dispose();cursor.dispose();selection.dispose();scroll.dispose();if(diff)diff.dispose();else code.dispose();original?.dispose();editor.current=null;};
+      cleanup=()=>{views.set(file.id,code.saveViewState());captureView();change.dispose();cursor.dispose();selection.dispose();scroll.dispose();for(const subscription of labelSubscriptions)subscription.dispose();if(diff)diff.dispose();else code.dispose();original?.dispose();editor.current=null;};
     }).catch(e=>{if(!disposed){setFailure(message(e));setLoading(false);}});
     return()=>{disposed=true;cleanup();};
   },[file.id,file.root,file.path,file.conflict?.revision]);
