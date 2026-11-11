@@ -10,9 +10,46 @@ use std::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex, OnceLock, RwLock,
     },
+    time::{Duration, Instant},
 };
 
 const LIMIT: u64 = 32 * 1024 * 1024;
+const POLL_RECONCILE: Duration = Duration::from_secs(10);
+#[cfg(test)]
+thread_local! {
+    static READ_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+// A hint for idle synchronization only. Content revisions still govern saves.
+#[derive(PartialEq, Eq)]
+struct FileStamp {
+    len: u64,
+    modified: std::time::SystemTime,
+    identity: (u64, u64, i64, i64),
+}
+impl FileStamp {
+    fn from_meta(meta: &fs::Metadata) -> Option<Self> {
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::unix::fs::MetadataExt;
+            Some(Self {
+                len: meta.len(),
+                modified: meta.modified().ok()?,
+                identity: (meta.dev(), meta.ino(), meta.ctime(), meta.ctime_nsec()),
+            })
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = meta;
+            None // Unsupported identity/metadata: always reconcile content.
+        }
+    }
+}
+struct PollEntry {
+    stamp: FileStamp,
+    revision: String,
+    checked: Instant,
+}
 #[derive(Default)]
 pub struct Editor {
     roots: Mutex<HashMap<String, Scope>>,
@@ -27,6 +64,7 @@ struct Scope {
     project: String,
     runtime: String,
     grants: HashMap<PathBuf, Arc<File>>,
+    polls: HashMap<(String, String), PollEntry>,
 }
 // Constructed only by the native bridge; never deserialized from renderer input.
 pub struct GrantRequest {
@@ -373,6 +411,9 @@ fn parent(root: &Path, parts: &[String]) -> Result<Parent> {
     })
 }
 fn read(path: &Path) -> Result<Vec<u8>> {
+    read_snapshot(path).map(|(bytes, _)| bytes)
+}
+fn read_snapshot(path: &Path) -> Result<(Vec<u8>, Option<FileStamp>)> {
     let meta = checked_meta(path)?;
     if !meta.is_file() {
         return Err(error("path", "Only regular files may be edited."));
@@ -404,12 +445,21 @@ fn read(path: &Path) -> Result<Vec<u8>> {
             return Err(error("symlink", "Reparse points are not editable."));
         }
     }
+    let before = FileStamp::from_meta(&meta);
     let mut bytes = Vec::new();
-    file.take(LIMIT + 1).read_to_end(&mut bytes).map_err(io)?;
+    (&file)
+        .take(LIMIT + 1)
+        .read_to_end(&mut bytes)
+        .map_err(io)?;
+    #[cfg(test)]
+    READ_BYTES.with(|count| count.set(count.get() + bytes.len()));
     if bytes.len() as u64 > LIMIT {
         return Err(error("largeFile", "File grew beyond 32 MiB."));
     }
-    Ok(bytes)
+    let after = FileStamp::from_meta(&file.metadata().map_err(io)?);
+    // Never pair bytes with metadata from a different version of the file.
+    let stamp = before.filter(|before| Some(before) == after.as_ref());
+    Ok((bytes, stamp))
 }
 fn move_no_replace(source: &Path, destination: &Path) -> Result<()> {
     #[cfg(target_os = "linux")]
@@ -692,6 +742,7 @@ impl Editor {
                 project: project.into(),
                 runtime: runtime.into(),
                 grants: HashMap::new(),
+                polls: HashMap::new(),
             },
         );
         Ok(id)
@@ -741,6 +792,7 @@ impl Editor {
             .ok_or_else(|| error("grant", "Editor context changed."))?;
         context.id = self.next_scope.fetch_add(1, Ordering::SeqCst) + 1;
         context.grants.clear();
+        context.polls.clear();
         Ok(context.id)
     }
     pub fn finish_grant(&self, request: GrantRequest, confirmed: bool) -> Result<String> {
@@ -763,6 +815,7 @@ impl Editor {
             ));
         }
         let label = root_label(&request.path);
+        context.polls.clear();
         context.grants.insert(request.path, request.handle);
         Ok(label)
     }
@@ -865,6 +918,7 @@ impl Editor {
         if matches!(action, Action::Authorize) {
             return Ok(serde_json::json!({"root":root_label(&root)}));
         }
+        let poll_root = root_label(&root);
         #[cfg(target_os = "linux")]
         let root = {
             use std::os::fd::AsRawFd;
@@ -927,14 +981,59 @@ impl Editor {
                 }
             }
             Action::Poll { path, expected } => {
+                let key = (poll_root, path.clone());
                 let target = parent(&root, &relative(&path)?)?;
-                let bytes = read(&target.path)?;
-                if revision(&bytes) == expected {
-                    Ok(serde_json::Value::Null)
+                let meta = checked_meta(&target.path)?;
+                if !meta.is_file() {
+                    return Err(error("path", "Only regular files may be edited."));
+                }
+                if meta.len() > LIMIT {
+                    return Err(error("largeFile", "Files over 32 MiB are not opened."));
+                }
+                let stamp = FileStamp::from_meta(&meta);
+                {
+                    let mut roots = self
+                        .roots
+                        .lock()
+                        .map_err(|_| error("busy", "Editor state unavailable."))?;
+                    let polls = &mut roots.get_mut(window).unwrap().polls;
+                    if polls.get(&key).is_some_and(|entry| {
+                        Some(&entry.stamp) == stamp.as_ref()
+                            && entry.revision == expected
+                            && entry.checked.elapsed() < POLL_RECONCILE
+                    }) {
+                        return Ok(serde_json::Value::Null);
+                    }
+                    polls.remove(&key);
+                }
+                let (bytes, stamp) = read_snapshot(&target.path)?;
+                let revision = revision(&bytes);
+                let response = if revision == expected {
+                    serde_json::Value::Null
                 } else {
                     serde_json::to_value(decode(&bytes)?)
-                        .map_err(|_| error("encoding", "Cannot encode file response."))
+                        .map_err(|_| error("encoding", "Cannot encode file response."))?
+                };
+                if let Some(stamp) = stamp {
+                    let mut roots = self
+                        .roots
+                        .lock()
+                        .map_err(|_| error("busy", "Editor state unavailable."))?;
+                    let polls = &mut roots.get_mut(window).unwrap().polls;
+                    // Bound metadata retained for closed tabs; never retain file content.
+                    if polls.len() >= 128 && !polls.contains_key(&key) {
+                        polls.clear();
+                    }
+                    polls.insert(
+                        key,
+                        PollEntry {
+                            stamp,
+                            revision,
+                            checked: Instant::now(),
+                        },
+                    );
                 }
+                Ok(response)
             }
             Action::Save {
                 path,
@@ -943,6 +1042,14 @@ impl Editor {
                 encoding,
                 bom,
             } => {
+                // A known save conflict must not be hidden by a metadata hint.
+                self.roots
+                    .lock()
+                    .map_err(|_| error("busy", "Editor state unavailable."))?
+                    .get_mut(window)
+                    .unwrap()
+                    .polls
+                    .remove(&(poll_root, path.clone()));
                 let target = parent(&root, &relative(&path)?)?;
                 let original = read(&target.path)?;
                 if revision(&original) != expected {
@@ -1214,6 +1321,206 @@ mod tests {
         editor.request("main", &root, Action::Authorize).unwrap();
         (editor, root)
     }
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn idle_poll_bytes_for_1_8_32_files() {
+        let mut total_bytes = 0;
+        for count in [1, 8, 32] {
+            let (editor, root) = fixture();
+            let text = "x".repeat(1024 * 1024);
+            let expected = revision(text.as_bytes());
+            for index in 0..count {
+                let path = format!("file-{index}");
+                fs::write(Path::new(&root).join(&path), &text).unwrap();
+                editor
+                    .request(
+                        "main",
+                        &root,
+                        Action::Poll {
+                            path,
+                            expected: expected.clone(),
+                        },
+                    )
+                    .unwrap();
+            }
+            READ_BYTES.with(|bytes| bytes.set(0));
+            let started = std::time::Instant::now();
+            for _ in 0..6 {
+                for index in 0..count {
+                    assert!(editor
+                        .request(
+                            "main",
+                            &root,
+                            Action::Poll {
+                                path: format!("file-{index}"),
+                                expected: expected.clone()
+                            }
+                        )
+                        .unwrap()
+                        .is_null());
+                }
+            }
+            let bytes = READ_BYTES.with(|bytes| bytes.get());
+            total_bytes += bytes;
+            eprintln!(
+                "#23 idle: files={count}, polls={}, full_read_bytes={bytes}, elapsed={:?}",
+                6 * count,
+                started.elapsed()
+            );
+            fs::remove_dir_all(root).unwrap();
+        }
+        assert_eq!(
+            total_bytes, 0,
+            "warm idle polls must not reread file contents"
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn poll_metadata_changes_fallback_and_save_conflicts() {
+        let (editor, root) = fixture();
+        let path = Path::new(&root).join("file");
+        fs::write(&path, "first").unwrap();
+        let poll = |expected: &str| {
+            editor.request(
+                "main",
+                &root,
+                Action::Poll {
+                    path: "file".into(),
+                    expected: expected.into(),
+                },
+            )
+        };
+        let first = revision(b"first");
+        assert!(poll(&first).unwrap().is_null());
+        let checked = editor.roots.lock().unwrap()["main"]
+            .polls
+            .values()
+            .next()
+            .unwrap()
+            .checked;
+        READ_BYTES.with(|bytes| bytes.set(0));
+        assert!(poll(&first).unwrap().is_null());
+        assert_eq!(READ_BYTES.with(|bytes| bytes.get()), 0);
+        assert_eq!(
+            editor.roots.lock().unwrap()["main"]
+                .polls
+                .values()
+                .next()
+                .unwrap()
+                .checked,
+            checked
+        );
+        // Timestamp-only changes reconcile once, without returning a changed document.
+        let modified = fs::metadata(&path).unwrap().modified().unwrap();
+        File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(modified + Duration::from_secs(2))
+            .unwrap();
+        assert!(poll(&first).unwrap().is_null());
+        assert_eq!(READ_BYTES.with(|bytes| bytes.get()), 5);
+        // Same-size write with restored mtime still changes Linux ctime.
+        fs::write(&path, "other").unwrap();
+        File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(modified)
+            .unwrap();
+        let changed_at = Instant::now();
+        let changed = poll(&first).unwrap();
+        assert_eq!(changed["text"], "other");
+        eprintln!(
+            "#23 same-size external edit -> poll response: {:?}",
+            changed_at.elapsed()
+        );
+        let other = changed["revision"].as_str().unwrap();
+        assert!(poll(other).unwrap().is_null());
+        // Atomic replacement must change file identity even at the same length/mtime.
+        let replacement = Path::new(&root).join("replacement");
+        fs::write(&replacement, "third").unwrap();
+        File::options()
+            .write(true)
+            .open(&replacement)
+            .unwrap()
+            .set_modified(modified)
+            .unwrap();
+        fs::rename(replacement, &path).unwrap();
+        assert_eq!(poll(other).unwrap()["text"], "third");
+        // Model a filesystem hiding all metadata changes: reconciliation is bounded
+        // by the last content read, not extended by cheap polls.
+        let third = revision(b"third");
+        fs::write(&path, "final").unwrap();
+        {
+            let mut roots = editor.roots.lock().unwrap();
+            let entry = roots
+                .get_mut("main")
+                .unwrap()
+                .polls
+                .values_mut()
+                .next()
+                .unwrap();
+            entry.stamp = FileStamp::from_meta(&fs::metadata(&path).unwrap()).unwrap();
+            entry.checked = Instant::now() - POLL_RECONCILE;
+        }
+        READ_BYTES.with(|bytes| bytes.set(0));
+        assert_eq!(poll(&third).unwrap()["text"], "final");
+        assert_eq!(READ_BYTES.with(|bytes| bytes.get()), 5);
+        // Content comparison at save remains authoritative even with a false hint.
+        fs::write(&path, "again").unwrap();
+        {
+            let mut roots = editor.roots.lock().unwrap();
+            let entry = roots
+                .get_mut("main")
+                .unwrap()
+                .polls
+                .values_mut()
+                .next()
+                .unwrap();
+            entry.stamp = FileStamp::from_meta(&fs::metadata(&path).unwrap()).unwrap();
+        }
+        assert_eq!(
+            editor
+                .request(
+                    "main",
+                    &root,
+                    Action::Save {
+                        path: "file".into(),
+                        expected: revision(b"final"),
+                        text: "unsaved buffer".into(),
+                        encoding: "utf8".into(),
+                        bom: false
+                    }
+                )
+                .unwrap_err()
+                .kind,
+            "conflict"
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), "again");
+        assert_eq!(poll(&revision(b"final")).unwrap()["text"], "again");
+        fs::remove_file(&path).unwrap();
+        assert!(poll(&revision(b"again")).is_err());
+        fs::write(&path, "back!").unwrap();
+        assert_eq!(poll(&revision(b"again")).unwrap()["text"], "back!");
+        File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_len(LIMIT + 1)
+            .unwrap();
+        assert_eq!(poll(&revision(b"back!")).unwrap_err().kind, "largeFile");
+        // No metadata hint can authorize a revoked scope or follow a symlink.
+        fs::remove_file(&path).unwrap();
+        std::os::unix::fs::symlink("missing", &path).unwrap();
+        assert_eq!(poll(&revision(b"back!")).unwrap_err().kind, "symlink");
+        editor.revoke("main", editor.test_scope("main")).unwrap();
+        assert!(editor.roots.lock().unwrap()["main"].polls.is_empty());
+        assert_eq!(poll(&first).unwrap_err().kind, "grant");
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn encodings_roundtrip_and_lossy_input_is_rejected() {
         for (encoding, bom) in [

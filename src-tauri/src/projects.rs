@@ -92,7 +92,7 @@ struct ServerState {
     events: VecDeque<(usize, Event)>,
     bytes: usize,
     threads: HashMap<String, Value>,
-    conversation_revision: u64,
+    conversation_revisions: HashMap<String, u64>,
 }
 impl ServerState {
     fn new(root: &Path, generation: u64) -> Self {
@@ -117,7 +117,7 @@ impl ServerState {
             events: VecDeque::new(),
             bytes: 0,
             threads: HashMap::new(),
-            conversation_revision: 0,
+            conversation_revisions: HashMap::new(),
         }
     }
     fn record(&mut self, line: &str) -> Result<(), Error> {
@@ -181,11 +181,23 @@ impl ServerState {
             }
         }
         conversations::record(&mut self.threads, &message);
-        self.conversation_revision += 1;
+        // Transcript invalidation is independent of event-ring/approval bookkeeping.
+        if let Some(thread) = params["threadId"].as_str() {
+            self.invalidate_conversation(thread);
+        }
         self.snapshot.active_turns = self.active.len();
         self.snapshot.pending_requests = self.pending.len();
         self.retain_event(message, line.len());
         Ok(())
+    }
+
+    fn invalidate_conversation(&mut self, thread: &str) {
+        if self.threads.contains_key(thread) {
+            *self
+                .conversation_revisions
+                .entry(thread.to_owned())
+                .or_default() += 1;
+        }
     }
 
     fn retain_event(&mut self, message: Value, bytes: usize) {
@@ -650,8 +662,13 @@ impl Registry {
         if state.snapshot.generation != generation {
             return Err(Error::StaleGeneration);
         }
+        let revision = state
+            .conversation_revisions
+            .get(thread)
+            .copied()
+            .unwrap_or(0);
         let thread = state.threads.get(thread).ok_or(Error::InvalidRequest)?;
-        read(thread, state.conversation_revision)
+        read(thread, revision)
     }
 
     pub fn detach_window(&self, window: &str) {
@@ -1131,6 +1148,22 @@ mod tests {
         assert_eq!(failed.error, Some(Error::ServerExit));
         assert_eq!(failed.pending_requests, 1);
         assert!(failed.pid.is_none());
+        {
+            let inner = registry.inner.lock().unwrap();
+            let mut state = inner.projects[&PathBuf::from(&failed.root)]
+                .state
+                .lock()
+                .unwrap();
+            state
+                .threads
+                .insert("thread".into(), json!({"id":"thread","turns":[]}));
+            state.invalidate_conversation("thread");
+        }
+        let old_revision = registry
+            .conversation("main", &failed.root, failed.generation, "thread")
+            .unwrap()["clientRevision"]
+            .as_u64()
+            .unwrap();
         registry
             .connect("second", project.root(), None, false)
             .unwrap();
@@ -1147,6 +1180,43 @@ mod tests {
         assert_eq!(ready.pending_requests, 0);
         assert_eq!(ready.active_turns, 0);
         assert_eq!(starts.load(Ordering::Relaxed), 2);
+        assert_eq!(
+            registry.conversation_since(
+                "main",
+                &ready.root,
+                ready.generation,
+                "thread",
+                Some(old_revision)
+            ),
+            Err(Error::InvalidRequest)
+        );
+        {
+            let inner = registry.inner.lock().unwrap();
+            let mut state = inner.projects[&PathBuf::from(&ready.root)]
+                .state
+                .lock()
+                .unwrap();
+            assert!(state.conversation_revisions.is_empty());
+            state
+                .threads
+                .insert("thread".into(), json!({"id":"thread","turns":[]}));
+            state.invalidate_conversation("thread");
+        }
+        assert_eq!(
+            registry.conversation_since(
+                "main",
+                &ready.root,
+                failed.generation,
+                "thread",
+                Some(old_revision)
+            ),
+            Err(Error::StaleGeneration)
+        );
+        // Revision numbers are scoped by generation; the UI resets its token on reconnect.
+        assert!(!registry
+            .conversation("main", &ready.root, ready.generation, "thread")
+            .unwrap()
+            .is_null());
         assert!(matches!(
             registry.events("main", &ready.root, failed.generation, 0),
             Err(Error::StaleGeneration)
@@ -1280,6 +1350,118 @@ mod tests {
             registry.connect("main", project.root(), None, false),
             Err(Error::ExitPending)
         ));
+    }
+
+    #[test]
+    fn parallel_threads_and_windows_keep_independent_revision_tokens() {
+        let project = Temp::new();
+        let (registry, _) = registry(HOLD);
+        registry
+            .connect("main", project.root(), None, false)
+            .unwrap();
+        let ready = wait(&registry, "main", |s| s[0].status == Status::Ready)[0].clone();
+        registry
+            .connect("second", project.root(), None, false)
+            .unwrap();
+        let state = registry.inner.lock().unwrap().projects[&PathBuf::from(&ready.root)]
+            .state
+            .clone();
+        for id in ["one", "two"] {
+            state
+                .lock()
+                .unwrap()
+                .threads
+                .insert(id.into(), json!({"id":id,"turns":[]}));
+            state.lock().unwrap().record(&json!({"method":"turn/started","params":{"threadId":id,"turn":{"id":"turn","status":"inProgress","items":[]}}}).to_string()).unwrap();
+        }
+        assert_eq!(state.lock().unwrap().snapshot.active_turns, 2);
+        let poll = |window, id, after| {
+            registry
+                .conversation_since(window, &ready.root, ready.generation, id, after)
+                .unwrap()
+        };
+        for _ in 0..8 {
+            for (id, other) in [("one", "two"), ("two", "one")] {
+                let before = poll("main", id, None)["clientRevision"].as_u64().unwrap();
+                let other_before = poll("second", other, None)["clientRevision"]
+                    .as_u64()
+                    .unwrap();
+                state.lock().unwrap().record(&json!({"method":"item/agentMessage/delta","params":{"threadId":id,"turnId":"turn","itemId":"reply","delta":id}}).to_string()).unwrap();
+                let updated = poll("main", id, Some(before));
+                assert!(!updated.is_null());
+                assert_eq!(poll("second", id, Some(before)), updated);
+                assert!(poll("second", other, Some(other_before)).is_null());
+            }
+        }
+        let before = poll("main", "two", None)["clientRevision"]
+            .as_u64()
+            .unwrap();
+        state.lock().unwrap().record(&json!({"id":"approval","method":"item/fileChange/requestApproval","params":{"threadId":"one","turnId":"turn","itemId":"file"}}).to_string()).unwrap();
+        for _ in 0..300 {
+            state
+                .lock()
+                .unwrap()
+                .record(r#"{"method":"future/projectEvent","params":{}}"#)
+                .unwrap();
+        }
+        assert!(poll("second", "two", Some(before)).is_null());
+        let events = registry
+            .events("second", &ready.root, ready.generation, 0)
+            .unwrap();
+        assert!(events.truncated);
+        assert_eq!(events.pending.len(), 1);
+        assert_eq!(registry.view("second").unwrap().approvals.len(), 1);
+        for id in ["one", "two"] {
+            let before = poll("main", id, None)["clientRevision"].as_u64().unwrap();
+            state.lock().unwrap().record(&json!({"method":"turn/completed","params":{"threadId":id,"turn":{"id":"turn","status":"completed","items":[]}}}).to_string()).unwrap();
+            let final_view = poll("second", id, Some(before));
+            assert_eq!(final_view["turns"].as_array().unwrap().len(), 1);
+            assert_eq!(final_view["turns"][0]["status"], "completed");
+            assert_eq!(final_view["turns"][0]["items"][0]["text"], id.repeat(8));
+        }
+        assert_eq!(state.lock().unwrap().snapshot.active_turns, 0);
+        registry.shutdown(true).unwrap();
+    }
+
+    #[test]
+    fn unrelated_streaming_keeps_large_transcripts_cached() {
+        let project = Temp::new();
+        let (registry, _) = registry(HOLD);
+        registry
+            .connect("main", project.root(), None, false)
+            .unwrap();
+        let ready = wait(&registry, "main", |s| s[0].status == Status::Ready)[0].clone();
+        let state = registry.inner.lock().unwrap().projects[&PathBuf::from(&ready.root)]
+            .state
+            .clone();
+        for id in ["active", "idle"] {
+            state.lock().unwrap().threads.insert(id.into(), json!({"id":id,"turns":[],"preview":if id == "idle" {"x".repeat(1024 * 1024)} else {String::new()}}));
+        }
+        let poll = |id, after| {
+            registry
+                .conversation_since("main", &ready.root, ready.generation, id, after)
+                .unwrap()
+        };
+        let idle_revision = poll("idle", None)["clientRevision"].as_u64().unwrap();
+        let mut active_revision = poll("active", None)["clientRevision"].as_u64().unwrap();
+        let mut bytes = 0;
+        let mut max_update = Duration::ZERO;
+        let started = Instant::now();
+        for _ in 0..32 {
+            let update_started = Instant::now();
+            state.lock().unwrap().record(&json!({"method":"item/agentMessage/delta","params":{"threadId":"active","turnId":"turn","itemId":"message","delta":"x"}}).to_string()).unwrap();
+            let active = poll("active", Some(active_revision));
+            active_revision = active["clientRevision"].as_u64().unwrap();
+            max_update = max_update.max(update_started.elapsed());
+            bytes += serde_json::to_vec(&poll("idle", Some(idle_revision)))
+                .unwrap()
+                .len();
+        }
+        let active = poll("active", None);
+        assert_eq!(active["turns"][0]["items"][0]["text"], "x".repeat(32));
+        eprintln!("#24 fixture: 32 updates, idle transcript 1 MiB, serialized idle bytes={bytes}, elapsed={:?}, max record-to-active-poll={max_update:?}", started.elapsed());
+        registry.shutdown(true).unwrap();
+        assert_eq!(bytes, 32 * 4, "unrelated polls must serialize only null");
     }
 
     #[test]

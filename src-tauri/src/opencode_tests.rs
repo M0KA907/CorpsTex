@@ -185,6 +185,10 @@ fn acp_lifecycle_catalog_history_streaming_permissions_and_cancel() {
     assert_eq!(models["data"][1]["freeLabel"], false);
     let new = call(&registry, &s, Action::NewThread).unwrap();
     let id = new["thread"]["id"].as_str().unwrap();
+    let saved = registry
+        .conversation("main", &s.root, s.generation, "saved")
+        .unwrap();
+    let saved_revision = saved["clientRevision"].as_u64().unwrap();
     assert_eq!(
         registry.request("foreign-window", &s.root, s.generation, send(id, "hello")),
         Err(Error::NotSubscribed)
@@ -277,6 +281,17 @@ fn acp_lifecycle_catalog_history_streaming_permissions_and_cancel() {
         .conversation("main", &s.root, s.generation, id)
         .unwrap();
     assert_eq!(transcript["turns"][1]["status"], "interrupted");
+    assert!(registry
+        .conversation_since(
+            "second",
+            &s.root,
+            s.generation,
+            "saved",
+            Some(saved_revision)
+        )
+        .unwrap()
+        .is_null());
+    let active_revision = transcript["clientRevision"].as_u64().unwrap();
     let loaded = call(
         &registry,
         &s,
@@ -287,6 +302,14 @@ fn acp_lifecycle_catalog_history_streaming_permissions_and_cancel() {
     .unwrap();
     assert_eq!(loaded["thread"]["turns"].as_array().unwrap().len(), 2);
     assert!(loaded.to_string().contains("Saved reply 1"));
+    assert!(!registry
+        .conversation_since("main", &s.root, s.generation, "saved", Some(saved_revision))
+        .unwrap()
+        .is_null());
+    assert!(registry
+        .conversation_since("main", &s.root, s.generation, id, Some(active_revision))
+        .unwrap()
+        .is_null());
     assert_eq!(
         call(
             &registry,

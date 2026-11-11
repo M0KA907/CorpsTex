@@ -240,6 +240,7 @@ impl Adapter {
                 } else if self.capabilities["loadSession"] == true {
                     self.reserved.insert(thread_id.clone());
                     state.threads.get_mut(&thread_id).unwrap()["turns"] = json!([]);
+                    state.invalidate_conversation(&thread_id);
                     self.rpc(
                         process,
                         "session/load",
@@ -434,7 +435,7 @@ impl Adapter {
         state.active.insert((thread_id.clone(), turn.clone()));
         self.reserved.remove(&thread_id);
         state.snapshot.active_turns = state.active.len();
-        state.conversation_revision += 1;
+        state.invalidate_conversation(&thread_id);
         let _ = reply.send(Ok(json!({"turn":{"id":turn,"status":"inProgress"}})));
         Ok(())
     }
@@ -535,6 +536,7 @@ impl Adapter {
                             t["name"] = thread["name"].clone();
                         })
                         .or_insert_with(|| thread.clone());
+                    state.invalidate_conversation(id);
                     data.push(thread);
                 }
                 json!({"data":data,"nextCursor":result["nextCursor"]})
@@ -549,6 +551,7 @@ impl Adapter {
                 self.loaded.insert(id.clone());
                 let thread = thread_value(&id, &state.snapshot.root, None);
                 state.threads.insert(id.clone(), thread.clone());
+                state.invalidate_conversation(&id);
                 if catalog {
                     self.catalog_session = Some(id);
                     model_page(&config)
@@ -607,7 +610,6 @@ impl Adapter {
                 return Ok(());
             }
         };
-        state.conversation_revision += 1;
         if let Some(reply) = reply {
             let _ = reply.send(Ok(output));
         }
@@ -640,7 +642,7 @@ fn complete(state: &mut ServerState, session: &str, id: &str, status: &str, erro
     state.active.remove(&(session.to_owned(), id.to_owned()));
     state.snapshot.active_turns = state.active.len();
     state.snapshot.pending_requests = state.pending.len();
-    state.conversation_revision += 1;
+    state.invalidate_conversation(session);
 }
 fn update(state: &mut ServerState, params: &Value) -> Result<(), Error> {
     let session = params["sessionId"]
@@ -656,7 +658,7 @@ fn update(state: &mut ServerState, params: &Value) -> Result<(), Error> {
         if u["title"].is_string() {
             thread["name"] = u["title"].clone();
         }
-        state.conversation_revision += 1;
+        state.invalidate_conversation(session);
         return Ok(());
     }
     if matches!(
@@ -664,7 +666,7 @@ fn update(state: &mut ServerState, params: &Value) -> Result<(), Error> {
         "available_commands_update" | "current_mode_update" | "usage_update"
     ) {
         thread[kind] = u.clone();
-        state.conversation_revision += 1;
+        state.invalidate_conversation(session);
         return Ok(());
     }
     let turns = thread["turns"]
@@ -782,7 +784,7 @@ fn update(state: &mut ServerState, params: &Value) -> Result<(), Error> {
             );
         }
     }
-    state.conversation_revision += 1;
+    state.invalidate_conversation(session);
     Ok(())
 }
 fn handshake(process: &mut Process, stop: &AtomicBool) -> Result<Value, Error> {

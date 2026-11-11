@@ -447,6 +447,7 @@ fn hydrate(state: &mut ServerState, thread: &Value) -> Result<(), Error> {
         thread["turns"] = json!([]);
     }
     state.threads.insert(id.to_owned(), thread);
+    state.invalidate_conversation(id);
     Ok(())
 }
 fn apply(
@@ -455,6 +456,17 @@ fn apply(
     state: &mut ServerState,
     catalog: &mut Catalog,
 ) -> Result<(), Error> {
+    // These replies can mutate an existing transcript, including late replies to
+    // already completed turns. Hydration invalidates each returned thread below.
+    match action {
+        Action::Rename { thread_id, .. }
+        | Action::Archive { thread_id }
+        | Action::Unarchive { thread_id }
+        | Action::Review { thread_id, .. }
+        | Action::History { thread_id, .. }
+        | Action::Send { thread_id, .. } => state.invalidate_conversation(thread_id),
+        _ => {}
+    }
     if matches!(
         action,
         Action::Rename { .. } | Action::Archive { .. } | Action::Compact { .. }
@@ -860,7 +872,6 @@ pub fn serve(
                 let request = pending.remove(&id).ok_or(Error::UnsupportedProtocol)?;
                 let result = runtime::response(&message, id).and_then(|mut result| {
                     apply(&request.action, &mut result, &mut state, &mut catalog)?;
-                    state.conversation_revision += 1;
                     Ok(result)
                 });
                 if let Some(reply) = request.reply {
@@ -1179,6 +1190,139 @@ mod tests {
     }
     fn event(state: &mut ServerState, value: Value) {
         state.record(&value.to_string()).unwrap();
+    }
+
+    #[test]
+    fn replies_and_notifications_invalidate_only_their_thread() {
+        let mut state = state();
+        let root = state.snapshot.root.clone();
+        let idle_revision = state.conversation_revisions["two"];
+        let mut catalog = Catalog::new();
+        for (action, mut result, affected) in [
+            (
+                Action::NewThread,
+                json!({"thread":{"id":"new","cwd":root}}),
+                "new",
+            ),
+            (
+                Action::Fork {
+                    thread_id: "one".into(),
+                },
+                json!({"thread":{"id":"fork","cwd":root}}),
+                "fork",
+            ),
+            (
+                Action::Resume {
+                    thread_id: "one".into(),
+                },
+                json!({"thread":{"id":"one","cwd":root}}),
+                "one",
+            ),
+            (
+                Action::ListThreads { cursor: None },
+                json!({"data":[{"id":"one","cwd":root}]}),
+                "one",
+            ),
+            (
+                Action::Rename {
+                    thread_id: "one".into(),
+                    name: "renamed".into(),
+                },
+                json!({}),
+                "one",
+            ),
+            (
+                Action::Archive {
+                    thread_id: "one".into(),
+                },
+                json!({}),
+                "one",
+            ),
+            (
+                Action::Unarchive {
+                    thread_id: "one".into(),
+                },
+                json!({"thread":{"id":"one","cwd":root}}),
+                "one",
+            ),
+            (
+                Action::History {
+                    thread_id: "one".into(),
+                    cursor: None,
+                },
+                json!({"data":[{"id":"old","status":"completed","items":[]}]}),
+                "one",
+            ),
+            (
+                Action::Send {
+                    thread_id: "one".into(),
+                    text: "hi".into(),
+                    images: vec![],
+                    skills: vec![],
+                    model: None,
+                    effort: None,
+                },
+                json!({"turn":{"id":"sent","status":"inProgress","items":[]}}),
+                "one",
+            ),
+            (
+                Action::Review {
+                    thread_id: "one".into(),
+                    target: ReviewTarget::UncommittedChanges,
+                },
+                json!({"reviewThreadId":"one","turn":{"id":"review","status":"completed","items":[]}}),
+                "one",
+            ),
+        ] {
+            let before = state
+                .conversation_revisions
+                .get(affected)
+                .copied()
+                .unwrap_or(0);
+            apply(&action, &mut result, &mut state, &mut catalog).unwrap();
+            assert!(
+                state.conversation_revisions[affected] > before,
+                "{action:?}"
+            );
+            assert_eq!(
+                state.conversation_revisions["two"], idle_revision,
+                "{action:?}"
+            );
+        }
+        let before = state.conversation_revisions["one"];
+        for message in [
+            json!({"method":"turn/started","params":{"threadId":"one","turn":{"id":"sent","status":"inProgress","items":[]}}}),
+            json!({"method":"item/agentMessage/delta","params":{"threadId":"one","turnId":"sent","itemId":"reply","delta":"final"}}),
+            json!({"method":"turn/completed","params":{"threadId":"one","turn":{"id":"sent","status":"completed","items":[]}}}),
+            json!({"method":"thread/name/updated","params":{"threadId":"one","threadName":"named"}}),
+        ] {
+            event(&mut state, message);
+        }
+        assert!(state.conversation_revisions["one"] > before);
+        assert_eq!(state.conversation_revisions["two"], idle_revision);
+        assert_eq!(state.threads["one"]["turns"][1]["status"], "completed");
+        assert_eq!(
+            state.threads["one"]["turns"][1]["items"][1]["text"],
+            "final"
+        );
+        let revisions = state.conversation_revisions.clone();
+        event(&mut state, json!({"method":"account/updated","params":{}}));
+        event(
+            &mut state,
+            json!({"method":"future/projectEvent","params":{}}),
+        );
+        apply(
+            &Action::ListModels {
+                cursor: None,
+                thread_id: None,
+            },
+            &mut json!({"data":[]}),
+            &mut state,
+            &mut catalog,
+        )
+        .unwrap();
+        assert_eq!(state.conversation_revisions, revisions);
+        assert_eq!(state.snapshot.sequence, 6);
     }
 
     #[test]
