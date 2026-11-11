@@ -1,10 +1,8 @@
 import { useEffect, useRef } from 'react';
 import { pruneEditorViews } from './EditorSurface';
-import { EditorSettings } from './EditorSettings';
-import { closeFile, dirty, discardFile, getEditor, invoke, message, notice, saveFile, showEditorSettings, syncFile, useEditor } from './state';
-export function EditorChrome({root}:{root:string}){
-  const state=useEditor();const used=useRef(false);const dialog=useRef<HTMLDialogElement>(null);const dirtyNow=state.files.some(f=>dirty(f)||Boolean(f.conflict));
-  useEffect(()=>{if(state.settingsOpen)dialog.current?.showModal();else dialog.current?.close();},[state.settingsOpen]);
+import { closeFile, dirty, discardFile, getEditor, invoke, message, notice, saveFile, syncFile, useEditor } from './state';
+export function EditorChrome(){
+  const state=useEditor();const used=useRef(false);const dirtyNow=state.files.some(f=>dirty(f)||Boolean(f.conflict));
   useEffect(()=>{void invoke('editor_dirty',{dirty:dirtyNow}).catch(e=>{if(dirtyNow)notice('Close protection could not reach the desktop: '+message(e));});},[dirtyNow]);
   useEffect(()=>{
     let polling=false;let gone=false;const lastSync=new Map<string,number>();
@@ -33,6 +31,5 @@ export function EditorChrome({root}:{root:string}){
   },[]);
   useEffect(()=>{if(!used.current&&!state.files.length)return;used.current=true;void import('./monaco').then(m=>{const ids=new Set(getEditor().files.map(f=>f.id));m.disposeClosedModels(ids);pruneEditorViews(ids);});},[state.files.map(f=>f.id).join(',')]);
   return <>{state.notice&&<div className="editor-notice" role="status"><span>{state.notice}</span><button type="button" aria-label="Dismiss editor notice" onClick={()=>notice('')}>×</button></div>}
-    {state.settingsOpen&&<dialog className="settings-dialog editor-settings-dialog" ref={dialog} aria-label="Editor settings" onCancel={event=>{event.preventDefault();showEditorSettings(false);}}><header className="settings-header"><h1>Settings · Editor</h1><button type="button" autoFocus onClick={()=>showEditorSettings(false)}>Close ×</button></header><div className="settings-body"><EditorSettings root={root}/></div></dialog>}
   </>;
 }

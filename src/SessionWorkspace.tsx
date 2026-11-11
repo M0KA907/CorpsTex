@@ -5,7 +5,7 @@ import { parseTimelineMode, timelineModeKey, type TimelineMode } from './Timelin
 import { EditorSurface } from './editor/EditorSurface';
 import { FileExplorer } from './editor/FileExplorer';
 import { EditorChrome } from './editor/EditorChrome';
-import { closeFile, dirty, setActiveFile, setEditorContext, showEditorSettings, updateFile, useEditor } from './editor/state';
+import { closeFile, dirty, setActiveFile, setEditorContext, updateFile, useEditor } from './editor/state';
 import './editor/editor.css';
 
 type Runtime = 'codex' | 'opencode';
@@ -123,7 +123,7 @@ export function SessionWorkspace(props:Props) {
   const sidebarNavigation=<nav className="sidebar-navigation" aria-label="Sidebar"><button type="button" aria-current={sidebarView==='conversations'?'page':undefined} onClick={()=>setSidebarView('conversations')}>Chats</button><button type="button" aria-label="Show project files" aria-current={sidebarView==='files'?'page':undefined} onClick={()=>setSidebarView('files')}>Files</button></nav>;
   return <div className="session-workspace" ref={host} data-sidebar-view={sidebarView} data-file-active={Boolean(activeFile)}>
     <FileExplorer runtime={props.runtime??'codex'} header={sidebarView==='files'?props.controls:null} navigation={sidebarNavigation} root={props.workspaceRoot} hidden={sidebarView!=='files'} onProject={root=>props.onActivate(props.runtime??'codex',root)} onNewConversation={()=>{setSidebarView('conversations');open(active);}}/>
-    <EditorChrome root={activeFile?.root??props.workspaceRoot}/>
+    <EditorChrome/>
     <div className="session-toolbar">
 
       <div role="tablist" aria-label="Open sessions" className="session-tabs" onKeyDown={event=>{
@@ -138,7 +138,7 @@ export function SessionWorkspace(props:Props) {
       }}>{layout.tabs.map(tab=><div className="session-tab" key={tab.id}><button type="button" role="tab" id={`session-tab-${tab.id}`} aria-controls={`session-panel-${tab.id}`} aria-selected={!activeFile&&tab.id===layout.active} tabIndex={!activeFile&&tab.id===layout.active?0:-1} title={`${tab.runtime} · ${tab.root} · ${tab.threadId??'No session'}`} disabled={props.exiting} onClick={()=>focus(tab.id)}>{titles[tab.id]||tab.threadId?.slice(0,8)||'New session'}<small>{tab.runtime} · {tab.root.split(/[\\/]/).filter(Boolean).at(-1)||'Choose project'}</small></button><button type="button" className="session-close" title="Close this view; runtime work and approvals continue" aria-label={`Close session ${titles[tab.id]||tab.threadId?.slice(0,8)||'New session'}`} disabled={props.exiting} onClick={()=>close(tab)}>×</button></div>)}{editor.files.map(file=><div className="session-tab file-tab" key={file.id} data-preview={file.preview}><button type="button" role="tab" id={`file-tab-${file.id}`} aria-controls="source-panel" aria-selected={file.id===editor.active} tabIndex={file.id===editor.active?0:-1} title={file.root+'/'+file.path} onClick={()=>setActiveFile(file.id)} onDoubleClick={()=>updateFile(file.id,{preview:false})} onKeyDown={event=>{if(event.key==='Delete'){event.preventDefault();event.stopPropagation();closeFile(file.id);}}}>{dirty(file)?'● ':''}{file.conflict?'⚠ ':''}{file.path.split('/').at(-1)}<small>{file.root.split(/[\\/]/).filter(Boolean).at(-1)} · {file.preview?'Preview':'Source'}</small></button><button type="button" className="session-close" aria-label={`Close file ${file.path}`} disabled={file.saving} onClick={()=>closeFile(file.id)}>×</button></div>)}</div>
       <div className="session-layout-controls"><button type="button" aria-label="New tab" title="New tab" disabled={props.exiting||layout.tabs.length>=limit} onClick={()=>open(active)}><span aria-hidden="true">+</span></button></div>
     </div>
-    {activeFile&&<div id="source-panel" className="source-panel" role="tabpanel" aria-labelledby={`file-tab-${activeFile.id}`}><EditorSurface key={activeFile.id} file={activeFile}/><button type="button" className="editor-settings-trigger" onClick={()=>showEditorSettings()}>Editor settings</button></div>}
+    {activeFile&&<div id="source-panel" className="source-panel" role="tabpanel" aria-labelledby={`file-tab-${activeFile.id}`}><EditorSurface key={activeFile.id} file={activeFile}/></div>}
     {notice&&<p className="session-notice" role="status">{notice}</p>}
     {layout.tabs.map(tab=>{
       const focused=tab.id===layout.active;const visible=focused;

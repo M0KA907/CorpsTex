@@ -287,7 +287,7 @@ export default function App() {
       </footer>
     {browserOpen && !view.exitRequested && <FolderBrowser initialPath={activeRoot} onClose={()=>setBrowserOpen(false)} onSelect={path=>{setRoot(path);setBrowserOpen(false);void connect(undefined,path);}} invoke={invoke} errorText={errorText}/> }
     </div>
-    <ApprovalCenter approvals={view.approvals} exiting={view.exitRequested} busyKeys={approvalBusy} invoke={approvalInvoke} errorText={errorText} />
+    <ApprovalCenter enabled={preferences.showApprovalCenter} approvals={view.approvals} exiting={view.exitRequested} busyKeys={approvalBusy} invoke={approvalInvoke} errorText={errorText} />
     {view.exitRequested && <ShutdownDialog projects={view.exitProjects} onCancel={cancelExit} onConfirm={confirmExit} />}
   </>;
 }

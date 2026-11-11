@@ -334,7 +334,6 @@ input:hover, textarea:hover, select:hover { border-color: var(--color-muted); }
   .settings-dialog .settings-nav { flex-direction: row; flex-wrap: wrap; padding: .5rem 1rem; border-right: 0; border-bottom: 1px solid var(--color-border-soft); }
   .settings-dialog .settings-nav button { padding: .45rem .5rem; }
 }
-.settings-dialog.editor-settings-dialog[open] { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
 .settings-header { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: 1.25rem 1.5rem 0.85rem; }
 .settings-header h1 { font-size: 1.3rem; letter-spacing: -0.02em; font-weight: 600; }
 .settings-header > button { min-width: 5rem; }

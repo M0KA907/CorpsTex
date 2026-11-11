@@ -98,7 +98,7 @@ function QueueDialog({ approvals, onClose, invoke, errorText, busyKeys }: { appr
 
 // Theme CSS is confined to the ordinary shell; trusted controls live in a closed
 // shadow root with a separate stylesheet and fixed accessible colors.
-export function ApprovalCenter({ approvals, exiting, invoke, errorText, busyKeys = new Set<string>() }: { approvals: Approval[]; exiting: boolean; invoke: Invoke; errorText: (error: unknown) => string; busyKeys?:Set<string> }) {
+export function ApprovalCenter({ enabled = true, approvals, exiting, invoke, errorText, busyKeys = new Set<string>() }: { enabled?:boolean; approvals: Approval[]; exiting: boolean; invoke: Invoke; errorText: (error: unknown) => string; busyKeys?:Set<string> }) {
   const host = useRef<HTMLDivElement>(null);
   const [shadow, setShadow] = useState<ShadowRoot | null>(null);
   const shadowRef = useRef<ShadowRoot | null>(null);
@@ -109,23 +109,23 @@ export function ApprovalCenter({ approvals, exiting, invoke, errorText, busyKeys
       setShadow(shadowRef.current);
     }
   }, []);
-  useEffect(() => { if (exiting) setOpen(false); }, [exiting]);
+  useEffect(() => { if (exiting || !enabled) setOpen(false); }, [exiting, enabled]);
   useEffect(() => {
     function shortcut(event: KeyboardEvent) {
-      if (exiting || event.isComposing || event.repeat || !event.ctrlKey || event.altKey || event.metaKey || event.shiftKey || event.key.toLowerCase() !== 'a') return;
+      if (!enabled || exiting || event.isComposing || event.repeat || !event.ctrlKey || event.altKey || event.metaKey || event.shiftKey || event.key.toLowerCase() !== 'a') return;
       event.preventDefault();
       setOpen(previous => !previous);
     }
     window.addEventListener('keydown', shortcut, true);
     return () => window.removeEventListener('keydown', shortcut, true);
-  }, [exiting]);
+  }, [exiting, enabled]);
   return <>
-    {!shadow && <button type="button" disabled>Approvals · {approvals.length}</button>}
+    {enabled && !shadow && <button type="button" disabled>Approvals · {approvals.length}</button>}
     <div ref={host} data-approval-controls />
     {shadow && createPortal(<><link rel="stylesheet" href={stylesheet} />
-      <button className="launcher" data-pending={approvals.some(a => a.status === 'ready') && !exiting} type="button" aria-keyshortcuts="Control+A" aria-expanded={open && !exiting} title="Approval center (Ctrl+A)" disabled={exiting} onClick={() => setOpen(true)}>Approvals · {approvals.length}</button>
+      {enabled && <button className="launcher" data-pending={approvals.some(a => a.status === 'ready') && !exiting} type="button" aria-keyshortcuts="Control+A" aria-expanded={open && !exiting} title="Approval center (Ctrl+A)" disabled={exiting} onClick={() => setOpen(true)}>Approvals · {approvals.length}</button>}
       <span className="sr-only" role="status">{approvals.filter(a => a.status === 'ready').length} requests awaiting review across all projects</span>
-      {open && !exiting && <QueueDialog busyKeys={busyKeys} approvals={approvals} onClose={() => setOpen(false)} invoke={invoke} errorText={errorText} />}
+      {enabled && open && !exiting && <QueueDialog busyKeys={busyKeys} approvals={approvals} onClose={() => setOpen(false)} invoke={invoke} errorText={errorText} />}
     </>, shadow)}
   </>;
 }

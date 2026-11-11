@@ -1,10 +1,14 @@
 import { useEffect, useState } from 'react';
 import { authorize, defaults, getEditor, invoke, message, presets, resolveOptions, sanitizeOptions, saveSettings, useEditor, type Options, type ServerConfig } from './state';
 
+type InstallPlan = {executable:string;args:string[];directory:string;serverPath:string;packages:string[];installedPackages:string[];previousPackages:string[]};
+
 export function EditorSettings({root}:{root:string}){
   const {settings}=useEditor();const [scope,setScope]=useState('global');const [profile,setProfile]=useState('');const [feedback,setFeedback]=useState('');
   const [section,setSection]=useState('preferences');const [discovery,setDiscovery]=useState<{executable:string;path:string|null}[]>([]);
   const [config,setConfig]=useState<ServerConfig>({...presets[0]});const [args,setArgs]=useState(JSON.stringify(config.args));const [busy,setBusy]=useState(false);const [running,setRunning]=useState<string[]>([]);
+  const [managed,setManaged]=useState<InstallPlan|null>(null);
+  useEffect(()=>{let gone=false;setManaged(null);if(['typescript','python','json','yaml'].includes(config.id))void invoke<InstallPlan>('editor_install_plan',{id:config.id}).then(plan=>{if(!gone)setManaged(plan);}).catch(()=>{});return()=>{gone=true;};},[config.id,busy]);
   useEffect(()=>{let gone=false;const timer=setInterval(()=>{void import('./monaco').then(m=>{if(!gone)setRunning([...m.servers.values()].filter(s=>s.root===root).map(s=>s.config.id));});},1200);return()=>{gone=true;clearInterval(timer);};},[root]);
   function change(patch:Partial<Options>){
     const next={...settings};if(scope==='project'){if(!root)return;next.projects={...next.projects,[root]:{...next.projects[root],...patch}};}
@@ -13,7 +17,7 @@ export function EditorSettings({root}:{root:string}){
   }
   const options=scope==='project'?resolveOptions(settings,root):scope==='profile'?{...settings.global,...sanitizeOptions(settings.profiles[settings.activeProfile])}:settings.global;
   function select(c:ServerConfig){setConfig({...c});setArgs(JSON.stringify(c.args));setFeedback('');}
-  async function act(action:'discover'|'start'|'stop'|'install'|'remove'){
+  async function act(action:'discover'|'start'|'stop'|'install'|'remove'|'rollback'){
     if(busy)return;setBusy(true);setFeedback('');
     try{
       if(action==='discover'){setDiscovery(await invoke('editor_lsp_discover'));setFeedback('PATH discovery finished. Select a discovered path below to use it.');return;}
@@ -27,12 +31,15 @@ export function EditorSettings({root}:{root:string}){
       }else if(action==='stop'){
         await m.stopServer(root,config.id);setRunning(old=>old.filter(i=>i!==config.id));setFeedback('Language server stopped.');
       }else {
-        const plan=await invoke<{executable:string;args:string[];directory:string;serverPath:string}>('editor_install_plan',{id:config.id,remove:action==='remove'});
-        if(!window.confirm(action==='remove'?`Remove managed language server files?\n\n${plan.directory}\n\nRunning instances will stop. This does not remove a system installation.`:`Approve download and ${action==='install'?'installation / update':'installation'}?\n\n${plan.executable}\n${JSON.stringify(plan.args)}\n\nDestination: ${plan.directory}\nPackage lifecycle scripts are disabled. This uses the configured npm registry.`))return;
+        const plan=await invoke<InstallPlan>('editor_install_plan',{id:config.id,remove:action==='remove',rollback:action==='rollback'});
+        const installed=plan.installedPackages.length?plan.installedPackages.join('\n'):'No recorded versions (absent or legacy installation)';
+        const selected=plan.packages.join('\n')||'Previous legacy installation (versions unrecorded)';
+        const prompt=action==='remove'?`Remove current and previous managed language server installations?\n\n${plan.directory}\n\nInstalled:\n${installed}\n\nRunning instances will stop. System installations are unaffected.`:action==='rollback'?`Restore the previous managed installation?\n\n${selected}\n\nCurrent:\n${installed}\n\nRunning instances will stop. Start the restored server explicitly.`:`Approve language server installation / update?\n\n${selected}\n\nCurrent:\n${installed}\n\n${plan.executable}\n${JSON.stringify(plan.args)}\n\nDestination: ${plan.directory}\nLocked dependency versions and integrity checks are used. Package lifecycle scripts are disabled. The current installation is retained for rollback. This uses the configured npm registry.`;
+        if(!window.confirm(prompt))return;
         for(const s of [...m.servers.values()])if(s.config.id===config.id)await m.stopServer(s.root,s.config.id);
-        const result=await invoke<{serverPath:string}|null>('editor_install',{id:config.id,approved:true,remove:action==='remove'});
+        const result=await invoke<{serverPath:string}|null>('editor_install',{id:config.id,approved:true,remove:action==='remove',rollback:action==='rollback'});
         setRunning(old=>old.filter(i=>i!==config.id));
-        if(result){const next={...config,executable:result.serverPath};select(next);saveSettings({...getEditor().settings,servers:getEditor().settings.servers.map(s=>s.id===config.id?next:s)});setFeedback('Installed. Review the executable, then explicitly Start for this project.');}
+        if(result){const next={...config,executable:result.serverPath};select(next);saveSettings({...getEditor().settings,servers:getEditor().settings.servers.map(s=>s.id===config.id?next:s)});setFeedback(action==='rollback'?'Previous installation restored. Start explicitly for this project.':'Installed locked preset. Previous installation retained when present. Start explicitly for this project.');}
         else {const original=presets.find(p=>p.id===config.id);if(original){select({...config,executable:original.executable});saveSettings({...getEditor().settings,servers:getEditor().settings.servers.map(s=>s.id===config.id?{...s,executable:original.executable}:s)});}setFeedback('Managed installation removed.');}
       }
     }catch(e){setFeedback(message(e));}finally{setBusy(false);}
@@ -66,7 +73,8 @@ export function EditorSettings({root}:{root:string}){
       {(['id','name','language','executable'] as const).map(field=><label className="settings-field" key={field}>{({id:'ID',name:'Name',language:'Monaco language IDs (comma separated)',executable:'Executable (PATH name or absolute path)'})[field]}<input value={config[field]} disabled={busy} onChange={e=>setConfig({...config,[field]:e.target.value})}/></label>)}
       <label className="settings-field">Arguments (JSON array)<input value={args} disabled={busy} onChange={e=>setArgs(e.target.value)}/></label>
       <div className="server-actions"><button type="button" disabled={busy} onClick={saveConfig}>Save configuration</button><button type="button" disabled={busy||!root||running.includes(config.id)} onClick={()=>void act('start')}>Start for project…</button><button type="button" disabled={busy||!running.includes(config.id)} onClick={()=>void act('stop')}>Stop</button></div>
-      <div className="server-actions"><button type="button" disabled={busy||!['typescript','python','json','yaml'].includes(config.id)} onClick={()=>void act('install')}>Install / update…</button><button type="button" disabled={busy||!['typescript','python','json','yaml'].includes(config.id)} onClick={()=>void act('remove')}>Remove managed installation…</button><button type="button" disabled={busy} onClick={()=>{if(window.confirm('Remove this configuration? Installed files remain.')){void import('./monaco').then(async m=>{for(const s of [...m.servers.values()])if(s.config.id===config.id)await m.stopServer(s.root,s.config.id);saveSettings({...settings,servers:settings.servers.filter(s=>s.id!==config.id)});select({...presets[0]});});}}}>Remove configuration…</button></div>
+      {managed&&<p role="status">Selected preset: {managed.packages.join(', ')}. Installed: {managed.installedPackages.join(', ')||'None or legacy (versions unrecorded)'}. Previous: {managed.previousPackages.join(', ')||'None or legacy (versions unrecorded)'}. {config.id==='yaml'?'YAML requires Node 22.13 or newer. ':''}Node requirements are enforced by npm.</p>}
+      <div className="server-actions"><button type="button" disabled={busy||!['typescript','python','json','yaml'].includes(config.id)} onClick={()=>void act('install')}>Install / update…</button><button type="button" disabled={busy||!['typescript','python','json','yaml'].includes(config.id)} onClick={()=>void act('rollback')}>Roll back managed installation…</button><button type="button" disabled={busy||!['typescript','python','json','yaml'].includes(config.id)} onClick={()=>void act('remove')}>Remove managed installation…</button><button type="button" disabled={busy} onClick={()=>{if(window.confirm('Remove this configuration? Installed files remain.')){void import('./monaco').then(async m=>{for(const s of [...m.servers.values()])if(s.config.id===config.id)await m.stopServer(s.root,s.config.id);saveSettings({...settings,servers:settings.servers.filter(s=>s.id!==config.id)});select({...presets[0]});});}}}>Remove configuration…</button></div>
       <p>Rust, Go and C/C++ presets discover system installations. Configure any compatible stdio server manually. Install/update/remove manages isolated npm packages for TypeScript, Python, JSON and YAML only.</p>
     </>}
     {busy&&<p role="status">Working… installation can take up to three minutes.</p>}{feedback&&<p role="status">{feedback}</p>}

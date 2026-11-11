@@ -74,8 +74,8 @@ function loadSettings():Settings {
   }catch{return freshSettings();}
 }
 export function resolveOptions(settings:Settings,root:string):Options{return {...defaults,...sanitizeOptions(settings.global),...sanitizeOptions(settings.profiles[settings.activeProfile]),...sanitizeOptions(settings.projects[root])};}
-type Snapshot={files:FileTab[];active:string|null;settings:Settings;notice:string;settingsOpen:boolean};
-let snapshot:Snapshot={files:[],active:null,settings:loadSettings(),notice:'',settingsOpen:false};
+type Snapshot={files:FileTab[];active:string|null;settings:Settings;notice:string};
+let snapshot:Snapshot={files:[],active:null,settings:loadSettings(),notice:''};
 const listeners=new Set<()=>void>();
 const serverSnapshot=snapshot;
 let reportedDirty:boolean|undefined;
@@ -105,7 +105,6 @@ export function updateFile(id:string,update:Partial<FileTab>){
 }
 export function setActiveFile(id:string|null){emit({active:id});}
 export function notice(text:string){emit({notice:text});}
-export function showEditorSettings(open=true){emit({settingsOpen:open});}
 export function saveSettings(settings:Settings){emit({settings});try{localStorage.setItem('corpstex.editor.settings.v1',JSON.stringify(settings));}catch{notice('Settings apply now, but could not be stored on this device.');}}
 const opening=new Map<string,Promise<void>>();
 export async function openFile(root:string,path:string,permanent=false,cursor?:FileTab['cursor']):Promise<void>{

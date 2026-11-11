@@ -2,6 +2,7 @@ import type { ActivityPreset } from './ActivityBar';
 import { useEffect, useState } from 'react';
 
 export type Preferences = {
+  showApprovalCenter: boolean;
   activityPreset: ActivityPreset;
   activityDisplay: 'bar' | 'compact' | 'hidden';
   palette: 'charcoal' | 'midnight' | 'forest';
@@ -14,7 +15,7 @@ export type Preferences = {
   texture: 'on' | 'off';
   surfaces: 'glass' | 'solid';
 };
-export const defaults: Preferences = { activityPreset: 'orbit', activityDisplay: 'bar', palette: 'charcoal', accent: 'gold', density: 'comfortable', textSize: 'medium', width: 'focused', motion: 'system', background: 'animated', texture: 'on', surfaces: 'glass' };
+export const defaults: Preferences = { showApprovalCenter: true, activityPreset: 'orbit', activityDisplay: 'bar', palette: 'charcoal', accent: 'gold', density: 'comfortable', textSize: 'medium', width: 'focused', motion: 'system', background: 'animated', texture: 'on', surfaces: 'glass' };
 const choices = { activityPreset: ['orbit','pulse','wave','dots','scan','steps','ribbon','beacon','matrix','minimal'], activityDisplay: ['bar','compact','hidden'], palette: ['charcoal','midnight','forest'], accent: ['gold','mint','blue'], density: ['comfortable','compact'], textSize: ['small','medium','large'], width: ['focused','wide'], motion: ['system','reduced'], background: ['animated','static','off'], texture: ['on','off'], surfaces: ['glass','solid'] };
 const storageKey = 'corpstex.appearance.v1';
 export function parsePreferences(raw: string | null): Preferences {
@@ -22,10 +23,11 @@ export function parsePreferences(raw: string | null): Preferences {
   try { parsed = JSON.parse(raw ?? '{}'); } catch { return {...defaults}; }
   const result = {...defaults};
   if (!parsed || typeof parsed !== 'object') return result;
-  for (const key of Object.keys(choices) as (keyof Preferences)[]) {
+  for (const key of Object.keys(choices) as (keyof typeof choices)[]) {
     const value = (parsed as Record<string, unknown>)[key];
     if (typeof value === 'string' && choices[key].includes(value)) Object.assign(result, {[key]: value});
   }
+  if (typeof (parsed as Record<string, unknown>).showApprovalCenter === 'boolean') result.showApprovalCenter = (parsed as {showApprovalCenter:boolean}).showApprovalCenter;
   return result;
 }
 export function usePreferences() {

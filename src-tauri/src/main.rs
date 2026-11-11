@@ -24,12 +24,15 @@ fn editor_install_plan(
     app: tauri::AppHandle,
     id: String,
     remove: Option<bool>,
+    rollback: Option<bool>,
 ) -> editor::Result<editor_install::Plan> {
     let base = app
         .path()
         .app_local_data_dir()
         .map_err(|_| editor::error("installer", "Application data path unavailable."))?;
-    if remove.unwrap_or(false) {
+    if rollback.unwrap_or(false) {
+        editor_install::rollback_plan(&base, &id)
+    } else if remove.unwrap_or(false) {
         editor_install::removal_plan(&base, &id)
     } else {
         editor_install::plan(&base, &id)
@@ -41,13 +44,17 @@ async fn editor_install(
     id: String,
     approved: bool,
     remove: bool,
+    rollback: Option<bool>,
 ) -> editor::Result<serde_json::Value> {
     let base = app
         .path()
         .app_local_data_dir()
         .map_err(|_| editor::error("installer", "Application data path unavailable."))?;
     tauri::async_runtime::spawn_blocking(move || {
-        if remove {
+        if rollback.unwrap_or(false) {
+            serde_json::to_value(editor_install::rollback(&base, &id, approved)?)
+                .map_err(|_| editor::error("installer", "Could not encode rollback result."))
+        } else if remove {
             editor_install::remove(&base, &id, approved)?;
             Ok(serde_json::Value::Null)
         } else {

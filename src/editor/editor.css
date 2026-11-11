@@ -15,7 +15,6 @@
 .editor-eyebrow { font-size:.65rem; letter-spacing:.12em; color:var(--color-faint); }
 .monaco-host { flex:1; min-width:0; min-height:8rem; overflow:hidden; }
 .editor-status { display:flex; flex-wrap:wrap; justify-content:space-between; gap:.5rem; padding:.4rem .8rem; color:var(--color-muted); font-size:.7rem; border-top:1px solid var(--color-border-soft); }
-.editor-settings-trigger { align-self:flex-end; margin:.25rem .75rem; font-size:.7rem; padding:.2rem .6rem; }
 .file-tab[data-preview=true] [role=tab] { font-style:italic; }
 .editor-notice { position:absolute; z-index:15; right:1rem; bottom:2rem; display:flex; align-items:center; gap:1rem; max-width:min(90%,40rem); padding:.6rem .8rem; border:1px solid var(--color-border); background:var(--color-raised); box-shadow:0 4px 24px #0005; border-radius:.4rem; font-size:.8rem; }
 .editor-notice span { overflow-wrap:anywhere; }
@@ -39,9 +38,6 @@
 .file-actions input { margin-top:.3rem; width:100%; min-width:0; }
 .file-actions>div { display:flex; flex-wrap:wrap; gap:.35rem; }
 .file-actions button { padding:.35rem .5rem; font-size:.7rem; }
-.editor-settings-dialog { grid-template-columns:minmax(0,1fr); grid-template-rows:auto minmax(0,1fr); }
-.editor-settings-dialog .settings-header { grid-column:1; }
-.editor-settings-dialog .settings-body { grid-column:1; }
 .editor-settings { min-width:0; }
 .editor-settings p { overflow-wrap:anywhere; }
 .editor-settings form { display:flex; gap:.5rem; align-items:end; flex-wrap:wrap; }
