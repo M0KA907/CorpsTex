@@ -610,16 +610,16 @@ impl Registry {
         })
     }
 
-    pub fn image_path(
+    pub fn image_preview(
         &self,
         window: &str,
         root: &str,
         generation: u64,
         thread: &str,
-        path: &str,
-    ) -> Result<PathBuf, Error> {
+        selection: &crate::media::Selection,
+    ) -> Result<crate::media::OpenPreview, Error> {
         self.with_conversation(window, root, generation, thread, |thread, _| {
-            crate::media::image_path(thread, root, path)
+            crate::media::open(thread, root, selection)
         })
     }
 
@@ -1299,58 +1299,130 @@ mod tests {
         );
         state.lock().unwrap().threads.get_mut("thread").unwrap()["turns"] =
             json!([{"id":"media","items":[{"type":"imageView","path":"output.png"}]}]);
+        std::fs::write(project.0.join("output.png"), b"\x89PNG\r\n\x1a\nfixture").unwrap();
+        let selection = crate::media::Selection {
+            path: "output.png".into(),
+            external_path: None,
+        };
+        assert!(matches!(
+            registry.image_preview("main", &ready.root, ready.generation, "thread", &selection),
+            Ok(crate::media::OpenPreview::Image(_))
+        ));
+        for (window, root, generation, thread, expected) in [
+            (
+                "other",
+                ready.root.as_str(),
+                ready.generation,
+                "thread",
+                Error::NotSubscribed,
+            ),
+            (
+                "main",
+                "/wrong-project",
+                ready.generation,
+                "thread",
+                Error::NotSubscribed,
+            ),
+            (
+                "main",
+                ready.root.as_str(),
+                ready.generation + 1,
+                "thread",
+                Error::StaleGeneration,
+            ),
+            (
+                "main",
+                ready.root.as_str(),
+                ready.generation,
+                "missing",
+                Error::InvalidRequest,
+            ),
+        ] {
+            assert_eq!(
+                registry
+                    .image_preview(window, root, generation, thread, &selection)
+                    .err(),
+                Some(expected)
+            );
+        }
         assert_eq!(
             registry
-                .image_path(
+                .image_preview(
                     "main",
                     &ready.root,
                     ready.generation,
                     "thread",
-                    "output.png"
+                    &crate::media::Selection {
+                        path: "secret.png".into(),
+                        external_path: None
+                    }
                 )
-                .unwrap(),
-            PathBuf::from(&ready.root).join("output.png")
+                .err(),
+            Some(Error::InvalidRequest)
+        );
+        // Even explicit external consent cannot bypass project/thread attribution.
+        let external = Temp::new();
+        let external_path = external
+            .0
+            .join("generated.png")
+            .to_str()
+            .unwrap()
+            .to_owned();
+        std::fs::write(&external_path, b"\x89PNG\r\n\x1a\nfixture").unwrap();
+        state.lock().unwrap().threads.get_mut("thread").unwrap()["turns"] =
+            json!([{"items":[{"type":"imageGeneration","savedPath":external_path}]}]);
+        let consent = crate::media::Selection {
+            path: external_path.clone(),
+            external_path: Some(external_path.clone()),
+        };
+        assert!(matches!(
+            registry.image_preview("main", &ready.root, ready.generation, "thread", &consent),
+            Ok(crate::media::OpenPreview::Image(_))
+        ));
+        assert_eq!(
+            registry
+                .image_preview("other", &ready.root, ready.generation, "thread", &consent)
+                .err(),
+            Some(Error::NotSubscribed)
         );
         assert_eq!(
-            registry.image_path(
-                "other",
+            registry
+                .image_preview(
+                    "main",
+                    &ready.root,
+                    ready.generation + 1,
+                    "thread",
+                    &consent
+                )
+                .err(),
+            Some(Error::StaleGeneration)
+        );
+        assert_eq!(
+            registry
+                .image_preview("main", &ready.root, ready.generation, "missing", &consent)
+                .err(),
+            Some(Error::InvalidRequest)
+        );
+        // The other runtime has no subscription or inherited grant.
+        assert_eq!(
+            Registry::opencode()
+                .image_preview("main", &ready.root, ready.generation, "thread", &consent)
+                .err(),
+            Some(Error::NotSubscribed)
+        );
+        assert!(matches!(
+            registry.image_preview(
+                "main",
                 &ready.root,
                 ready.generation,
                 "thread",
-                "output.png"
+                &crate::media::Selection {
+                    path: external_path,
+                    external_path: None
+                }
             ),
-            Err(Error::NotSubscribed)
-        );
-        assert_eq!(
-            registry.image_path(
-                "main",
-                &ready.root,
-                ready.generation + 1,
-                "thread",
-                "output.png"
-            ),
-            Err(Error::StaleGeneration)
-        );
-        assert_eq!(
-            registry.image_path(
-                "main",
-                &ready.root,
-                ready.generation,
-                "missing",
-                "output.png"
-            ),
-            Err(Error::InvalidRequest)
-        );
-        assert_eq!(
-            registry.image_path(
-                "main",
-                &ready.root,
-                ready.generation,
-                "thread",
-                "secret.png"
-            ),
-            Err(Error::InvalidRequest)
-        );
+            Ok(crate::media::OpenPreview::External(_))
+        ));
         state.lock().unwrap().threads.get_mut("thread").unwrap()["turns"] = json!([]);
         let first = registry
             .conversation("main", &ready.root, ready.generation, "thread")

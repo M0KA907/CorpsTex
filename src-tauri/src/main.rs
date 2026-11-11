@@ -2,6 +2,7 @@
 
 mod browser;
 mod editor;
+mod editor_consent;
 mod editor_install;
 mod editor_lsp;
 mod media;
@@ -64,13 +65,81 @@ async fn editor_request(
     window: tauri::Window,
     root: String,
     action: editor::Action,
+    scope: u64,
 ) -> editor::Result<serde_json::Value> {
     let label = window.label().to_owned();
     tauri::async_runtime::spawn_blocking(move || {
-        app.state::<editor::Editor>().request(&label, &root, action)
+        app.state::<editor::Editor>()
+            .request_scoped(&label, scope, &root, action)
     })
     .await
     .map_err(|_| editor::error("bridge", "Editor worker failed."))?
+}
+#[tauri::command]
+async fn editor_context(
+    app: tauri::AppHandle,
+    window: tauri::Window,
+    project: String,
+    runtime: String,
+) -> editor::Result<u64> {
+    let label = window.label().to_owned();
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<editor::Editor>();
+        let scope = state.context(&label, &project, &runtime)?;
+        // A scope change must also invalidate language servers from prior grants.
+        app.state::<editor_lsp::Servers>().stop_window(&label);
+        Ok(scope)
+    })
+    .await
+    .map_err(|_| editor::error("bridge", "Editor context worker failed."))?
+}
+#[tauri::command]
+async fn editor_revoke(
+    app: tauri::AppHandle,
+    window: tauri::Window,
+    scope: u64,
+) -> editor::Result<u64> {
+    let label = window.label().to_owned();
+    tauri::async_runtime::spawn_blocking(move || {
+        let next = app.state::<editor::Editor>().revoke(&label, scope)?;
+        app.state::<editor_lsp::Servers>().stop_window(&label);
+        Ok(next)
+    })
+    .await
+    .map_err(|_| editor::error("bridge", "Editor revocation worker failed."))?
+}
+#[tauri::command]
+async fn editor_grant(
+    app: tauri::AppHandle,
+    window: tauri::Window,
+    root: String,
+    scope: u64,
+) -> editor::Result<String> {
+    let label = window.label().to_owned();
+    tauri::async_runtime::spawn_blocking(move || {
+        let request = app
+            .state::<editor::Editor>()
+            .prepare_grant(&label, scope, &root)?;
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        let description = request.description.clone();
+        app.run_on_main_thread(move || {
+            let _ = tx.send(editor_consent::confirm(&description));
+        })
+        .map_err(|_| editor::error("grant", "Native confirmation unavailable."))?;
+        let confirmed = rx
+            .recv()
+            .map_err(|_| editor::error("grant", "Native confirmation closed."))??;
+        if app.get_webview_window(&label).is_none() {
+            return Err(editor::error(
+                "grant",
+                "Editor window closed. No access was granted.",
+            ));
+        }
+        app.state::<editor::Editor>()
+            .finish_grant(request, confirmed)
+    })
+    .await
+    .map_err(|_| editor::error("bridge", "Editor grant worker failed."))?
 }
 #[tauri::command]
 fn editor_dirty(
@@ -108,13 +177,15 @@ async fn editor_lsp_start(
     root: String,
     id: String,
     config: editor_lsp::Configuration,
+    scope: u64,
 ) -> editor::Result<serde_json::Value> {
     let label = window.label().to_owned();
-    let authorized = app.state::<editor::Editor>().authorized(&label, &root)?;
-    let root = std::path::PathBuf::from(editor::root_label(&authorized));
     tauri::async_runtime::spawn_blocking(move || {
-        app.state::<editor_lsp::Servers>()
-            .start(&label, &root, &id, config)
+        app.state::<editor::Editor>()
+            .with_authorized(&label, scope, &root, |authorized| {
+                app.state::<editor_lsp::Servers>()
+                    .start(&label, &authorized, &id, config)
+            })
     })
     .await
     .map_err(|_| editor::error("bridge", "Language server worker failed."))?
@@ -127,49 +198,77 @@ async fn editor_lsp_request(
     id: String,
     method: String,
     params: serde_json::Value,
+    scope: u64,
 ) -> editor::Result<serde_json::Value> {
     let label = window.label().to_owned();
-    app.state::<editor::Editor>().authorized(&label, &root)?;
     tauri::async_runtime::spawn_blocking(move || {
-        app.state::<editor_lsp::Servers>()
-            .request(&label, &root, &id, &method, params)
+        app.state::<editor::Editor>()
+            .with_authorized(&label, scope, &root, |_| {
+                app.state::<editor_lsp::Servers>()
+                    .request(&label, &root, &id, &method, params)
+            })
     })
     .await
     .map_err(|_| editor::error("bridge", "Language server worker failed."))?
 }
 #[tauri::command]
-fn editor_lsp_notify(
+async fn editor_lsp_notify(
+    app: tauri::AppHandle,
     window: tauri::Window,
-    state: tauri::State<'_, editor_lsp::Servers>,
     root: String,
     id: String,
     method: String,
     params: serde_json::Value,
+    scope: u64,
 ) -> editor::Result<()> {
-    state.notify(window.label(), &root, &id, &method, params)
+    let label = window.label().to_owned();
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<editor::Editor>()
+            .with_authorized(&label, scope, &root, |_| {
+                app.state::<editor_lsp::Servers>()
+                    .notify(&label, &root, &id, &method, params)
+            })
+    })
+    .await
+    .map_err(|_| editor::error("bridge", "Language server worker failed."))?
 }
 #[tauri::command]
-fn editor_lsp_poll(
+async fn editor_lsp_poll(
+    app: tauri::AppHandle,
     window: tauri::Window,
-    state: tauri::State<'_, editor_lsp::Servers>,
     root: String,
     id: String,
+    scope: u64,
 ) -> editor::Result<serde_json::Value> {
-    state.poll(window.label(), &root, &id)
+    let label = window.label().to_owned();
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<editor::Editor>()
+            .with_authorized(&label, scope, &root, |_| {
+                app.state::<editor_lsp::Servers>().poll(&label, &root, &id)
+            })
+    })
+    .await
+    .map_err(|_| editor::error("bridge", "Language server worker failed."))?
 }
+
 #[tauri::command]
 async fn editor_lsp_stop(
     app: tauri::AppHandle,
     window: tauri::Window,
     root: String,
     id: String,
+    scope: u64,
 ) -> editor::Result<()> {
     let label = window.label().to_owned();
     tauri::async_runtime::spawn_blocking(move || {
-        app.state::<editor_lsp::Servers>().stop(&label, &root, &id)
+        app.state::<editor::Editor>()
+            .with_authorized(&label, scope, &root, |_| {
+                app.state::<editor_lsp::Servers>().stop(&label, &root, &id);
+                Ok(())
+            })
     })
     .await
-    .map_err(|_| editor::error("bridge", "Language server cleanup failed."))
+    .map_err(|_| editor::error("bridge", "Language server cleanup failed."))?
 }
 
 #[tauri::command]
@@ -295,15 +394,20 @@ async fn conversation_image(
     root: String,
     generation: u64,
     thread_id: String,
-    path: String,
-) -> Result<String, runtime::Error> {
+    selection: media::Selection,
+) -> Result<media::Preview, runtime::Error> {
     let label = window.label().to_owned();
     tauri::async_runtime::spawn_blocking(move || {
-        let path = app
+        let preview = app
             .state::<runtimes::Runtimes>()
             .get(runtime)
-            .image_path(&label, &root, generation, &thread_id, &path)?;
-        media::read(&path)
+            .image_preview(&label, &root, generation, &thread_id, &selection)?;
+        match preview {
+            media::OpenPreview::Image(file) => Ok(media::Preview::Image {
+                url: media::read(file)?,
+            }),
+            media::OpenPreview::External(path) => Ok(media::Preview::External { path }),
+        }
     })
     .await
     .map_err(|_| runtime::Error::Transport)?
@@ -400,6 +504,9 @@ fn main() {
             editor_install_busy,
             editor_install,
             editor_request,
+            editor_context,
+            editor_grant,
+            editor_revoke,
             editor_dirty,
             editor_exit_pending,
             editor_resolve_exit,

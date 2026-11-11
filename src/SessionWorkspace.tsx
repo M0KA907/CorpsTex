@@ -5,7 +5,7 @@ import { parseTimelineMode, timelineModeKey, type TimelineMode } from './Timelin
 import { EditorSurface } from './editor/EditorSurface';
 import { FileExplorer } from './editor/FileExplorer';
 import { EditorChrome } from './editor/EditorChrome';
-import { closeFile, dirty, setActiveFile, showEditorSettings, updateFile, useEditor } from './editor/state';
+import { closeFile, dirty, setActiveFile, setEditorContext, showEditorSettings, updateFile, useEditor } from './editor/state';
 import './editor/editor.css';
 
 type Runtime = 'codex' | 'opencode';
@@ -47,6 +47,7 @@ export function closeSession(layout:SessionLayout,id:string):SessionLayout {
 type Props=ComponentProps<typeof Conversation> & {workspaceRoot:string;workspaceProjects:NonNullable<ComponentProps<typeof Conversation>['project']>[];onActivate:(runtime:Runtime,root:string)=>void};
 export function SessionWorkspace(props:Props) {
   const editor=useEditor();
+  useEffect(()=>{void setEditorContext(props.workspaceRoot,props.runtime??'codex').catch(e=>setNotice(typeof e?.message==='string'?e.message:'Editor access could not be initialized.'));},[props.workspaceRoot,props.runtime]);
   const [sidebarView,setSidebarView]=useState<'conversations'|'files'>('conversations');
   const activeFile=editor.files.find(f=>f.id===editor.active);
   const [layout,setLayout]=useState(()=>{try{const raw=typeof window==='undefined'?null:localStorage.getItem(key);const initial=parseSessionLayout(raw);if(!raw){initial.tabs[0].runtime=props.runtime??'codex';initial.tabs[0].root=props.workspaceRoot;}return initial;}catch{const initial=empty();initial.tabs[0].runtime=props.runtime??'codex';initial.tabs[0].root=props.workspaceRoot;return initial;}});
@@ -121,7 +122,7 @@ export function SessionWorkspace(props:Props) {
   const active=layout.tabs.find(t=>t.id===layout.active)!;
   const sidebarNavigation=<nav className="sidebar-navigation" aria-label="Sidebar"><button type="button" aria-current={sidebarView==='conversations'?'page':undefined} onClick={()=>setSidebarView('conversations')}>Chats</button><button type="button" aria-label="Show project files" aria-current={sidebarView==='files'?'page':undefined} onClick={()=>setSidebarView('files')}>Files</button></nav>;
   return <div className="session-workspace" ref={host} data-sidebar-view={sidebarView} data-file-active={Boolean(activeFile)}>
-    <FileExplorer header={sidebarView==='files'?props.controls:null} navigation={sidebarNavigation} root={props.workspaceRoot} hidden={sidebarView!=='files'} onProject={root=>props.onActivate(props.runtime??'codex',root)} onNewConversation={()=>{setSidebarView('conversations');open(active);}}/>
+    <FileExplorer runtime={props.runtime??'codex'} header={sidebarView==='files'?props.controls:null} navigation={sidebarNavigation} root={props.workspaceRoot} hidden={sidebarView!=='files'} onProject={root=>props.onActivate(props.runtime??'codex',root)} onNewConversation={()=>{setSidebarView('conversations');open(active);}}/>
     <EditorChrome root={activeFile?.root??props.workspaceRoot}/>
     <div className="session-toolbar">
 

@@ -10,7 +10,7 @@ import { parseModelChoice, type Preferences } from './preferences';
 import { InlineApprovals, matchingApprovals, type Approval } from './Approvals';
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { RichContent } from './RichContent';
-import { ImageLoader, MessageImage, type ImageAttachment } from './Media';
+import { ImageLoader, MessageImage, type ImageAttachment, type ImagePreview } from './Media';
 import { ExecutionTimeline, type TimelineMode, type TimelineProject } from './Timeline';
 import { ThreadControls, type ThreadOperation } from './ThreadControls';
 import { RuntimeItemDetails, TurnActivity, type TurnActivityData } from './RuntimeDetails';
@@ -428,7 +428,7 @@ export function Conversation({ sidebarToggle, runtime = 'codex', runtimeControls
   const openLibraryThread=useCallback((entry:Thread)=>{void libraryActions.current.open(entry);},[]);
   const moreLibraryThreads=useCallback(()=>{void libraryActions.current.list(true);},[]);
 
-  const loadImage=useMemo(()=>(path:string)=>invoke<string>('conversation_image',{runtime,root:project?.root,generation:project?.generation,threadId:selected,path}),[binding,selected,invoke]);
+  const loadImage=useMemo(()=>({context:`${runtime} · ${project?.root??''}`,load:(path:string,externalPath?:string)=>invoke<ImagePreview>('conversation_image',{runtime,root:project?.root,generation:project?.generation,threadId:selected,selection:{path,externalPath}})}),[binding,selected,invoke]);
   return <div className="session-content" ref={container} onAnimationEnd={event=>{if(event.animationName==='turn-complete')setCompletedTurn(null);}}>
     {settingsOpen && <Settings timelineMode={timelineMode} onTimelineModeChange={onTimelineModeChange} editorRoot={editorRoot||project?.root||''} tools={<McpStatus runtime={runtime} project={project} threadId={selected} invoke={invoke} errorText={errorText}/>} onClose={onCloseSettings} preferences={preferences} onPreferences={onPreferences} storageError={storageError} modelControls={<>{modelControls}<button type="button" disabled={!ready} onClick={()=>void loadModels()}>Refresh models</button>{catalogError&&<p role="alert">{catalogError}</p>}</>} runtime={<RuntimeSettings runtime={runtime} project={project} invoke={invoke} errorText={errorText}/>} />}
     <aside className="projects" aria-labelledby={ids('projects-title')}>
