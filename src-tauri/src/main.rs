@@ -295,15 +295,20 @@ async fn conversation_image(
     root: String,
     generation: u64,
     thread_id: String,
-    path: String,
-) -> Result<String, runtime::Error> {
+    selection: media::Selection,
+) -> Result<media::Preview, runtime::Error> {
     let label = window.label().to_owned();
     tauri::async_runtime::spawn_blocking(move || {
-        let path = app
+        let preview = app
             .state::<runtimes::Runtimes>()
             .get(runtime)
-            .image_path(&label, &root, generation, &thread_id, &path)?;
-        media::read(&path)
+            .image_preview(&label, &root, generation, &thread_id, &selection)?;
+        match preview {
+            media::OpenPreview::Image(file) => Ok(media::Preview::Image {
+                url: media::read(file)?,
+            }),
+            media::OpenPreview::External(path) => Ok(media::Preview::External { path }),
+        }
     })
     .await
     .map_err(|_| runtime::Error::Transport)?
