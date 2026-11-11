@@ -1,9 +1,38 @@
 import { useSyncExternalStore } from 'react';
 
 export type Invoke = <T>(command:string,args?:Record<string,unknown>)=>Promise<T>;
-export const invoke:Invoke = (command,args) => {
+const rawInvoke:Invoke = (command,args) => {
   const bridge=typeof window==='undefined'?undefined:(window as Window & {__TAURI__?:{core:{invoke:Invoke}}}).__TAURI__?.core.invoke;
   return bridge ? bridge(command,args) : Promise.reject({message:'File editing requires the CorpsTex desktop bridge.'});
+};
+let contextKey='';
+let context:Promise<number>|null=null;
+let contextQueue:Promise<unknown>=Promise.resolve();
+export function setEditorContext(project:string,runtime:string):Promise<number>{
+  const key=JSON.stringify([project,runtime]);
+  if(context&&contextKey===key)return context;
+  contextKey=key;
+  const next=contextQueue.catch(()=>{}).then(()=>rawInvoke<number>('editor_context',{project,runtime}));
+  context=next;contextQueue=next;
+  void next.catch(()=>{if(context===next){context=null;contextKey='';}});
+  return next;
+}
+export function bindEditorInvoke():Invoke {
+  const selected=context;
+  return async<T>(command:string,args?:Record<string,unknown>)=>{
+    if(!selected||context!==selected)throw {kind:'grant',message:'Editor context changed. Retry in the current project. Your buffer is retained.'};
+    const scope=await selected;
+    if(context!==selected)throw {kind:'grant',message:'Editor context changed. Retry in the current project.'};
+    const result=await rawInvoke<T>(command,{...args,scope});
+    if(context!==selected)throw {kind:'grant',message:'Editor context changed. Stale result discarded; your buffer is retained.'};
+    return result;
+  };
+}
+export const invoke:Invoke = async(command,args) => {
+  if(command==='editor_request'||command==='editor_grant'||['editor_lsp_start','editor_lsp_request','editor_lsp_notify','editor_lsp_poll','editor_lsp_stop'].includes(command)){
+    return bindEditorInvoke()(command,args);
+  }
+  return rawInvoke(command,args);
 };
 export function message(error:unknown):string {return typeof error==='object' && error!==null && 'message' in error ? String(error.message) : 'Editor operation failed. Your buffer has been retained.';}
 export type Disk = {text:string;revision:string;encoding:string;bom:boolean;bytes:number};
@@ -59,8 +88,16 @@ export function useEditor(){return useSyncExternalStore(callback=>{listeners.add
 export const getEditor=()=>snapshot;
 export const dirty=(f:FileTab)=>f.text!==f.disk.text;
 export const fs=<T,>(root:string,action:Record<string,unknown>)=>invoke<T>('editor_request',{root,action});
-const roots=new Map<string,Promise<string>>();
-export async function authorize(root:string):Promise<string>{let result=roots.get(root);if(!result){result=fs<{root:string}>(root,{type:'authorize'}).then(v=>v.root).catch(e=>{roots.delete(root);throw e;});roots.set(root,result);}return result;}
+// Lookup only. A renderer path or cached promise cannot create a native grant.
+export async function authorize(root:string):Promise<string>{return (await fs<{root:string}>(root,{type:'authorize'})).root;}
+export const grantEditorAccess=(root:string)=>invoke<string>('editor_grant',{root});
+export async function revokeEditorAccess(){
+  const selected=context;
+  if(!selected)return;
+  const next=selected.then(scope=>rawInvoke<number>('editor_revoke',{scope}));
+  context=next;contextQueue=next;
+  try{await next;}catch(e){if(context===next){context=null;contextKey='';}throw e;}
+}
 const syncing=new Map<string,symbol>();
 export function updateFile(id:string,update:Partial<FileTab>){
   if('disk' in update || 'conflict' in update || update.saving===true)syncing.delete(id);

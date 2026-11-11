@@ -309,7 +309,7 @@ export { ModelPicker, filterModels, recommendedFreeModels } from './ModelPicker'
 export { RuntimeSettings, OpenCodeConnectionSettings } from './Settings';
 
 export { parseSessionLayout, serializeSessionLayout, sessionKey, focusSession, closeSession } from './SessionWorkspace';
-export { defaults as editorDefaults, sanitizeOptions, resolveOptions, fileUri, relocatedPath, language, getEditor, openFile, updateFile, saveFile, syncFile, closeFile, discardFile, acceptMerge, acceptDisk, saveSettings, dirty as editorDirty } from './editor/state';
+export { bindEditorInvoke, setEditorContext, grantEditorAccess, revokeEditorAccess, defaults as editorDefaults, sanitizeOptions, resolveOptions, fileUri, relocatedPath, language, getEditor, openFile, updateFile, saveFile, syncFile, closeFile, discardFile, acceptMerge, acceptDisk, saveSettings, dirty as editorDirty } from './editor/state';
 export { ThreadControls } from './ThreadControls';
 export { RuntimeFields, RuntimeItemDetails, runtimeDetailData, TurnActivity } from './RuntimeDetails';
 export { McpStatusView } from './McpStatus';

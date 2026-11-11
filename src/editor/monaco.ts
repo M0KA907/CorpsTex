@@ -2,7 +2,7 @@ import * as monaco from 'monaco-editor/editor/editor.api';
 import 'monaco-editor/features/register.all';
 import 'monaco-editor/languages/definitions/register.all';
 import EditorWorker from 'monaco-editor/editor/editor.worker?worker';
-import { fileUri, getEditor, invoke, language, message, notice, openFile, type FileTab, type ServerConfig } from './state';
+import { fileUri, getEditor, bindEditorInvoke, language, message, notice, openFile, type Invoke, type FileTab, type ServerConfig } from './state';
 import { LspNotificationQueue } from './lspQueue';
 
 (globalThis as typeof globalThis & {MonacoEnvironment:unknown}).MonacoEnvironment={getWorker:()=>new EditorWorker()};
@@ -25,7 +25,7 @@ monaco.editor.registerEditorOpener({openCodeEditor:async(_source,resource,select
   await openFile(root,path,true,cursor);return true;
 }});
 type Json=Record<string,any>;
-type Running={root:string;config:ServerConfig;cap:Json;queue:LspNotificationQueue;disposables:monaco.IDisposable[];models:Map<string,monaco.IDisposable[]>;timer:ReturnType<typeof setInterval>;polling:boolean;status:string};
+type Running={invoke:Invoke;root:string;config:ServerConfig;cap:Json;queue:LspNotificationQueue;disposables:monaco.IDisposable[];models:Map<string,monaco.IDisposable[]>;timer:ReturnType<typeof setInterval>;polling:boolean;status:string};
 export const servers=new Map<string,Running>();
 const key=(root:string,id:string)=>JSON.stringify([root,id]);
 const match=(s:Running,m:monaco.editor.ITextModel)=>m.uri.toString().startsWith(canonicalFileUri(s.root)+'/')&&s.config.language.split(',').map(l=>l.trim()).includes(m.getLanguageId());
@@ -45,7 +45,7 @@ function markdown(contents:unknown):monaco.IMarkdownString[]{
 function send(s:Running,method:string,params:unknown,fullTextUri?:string){
   s.queue.enqueue(method,params,fullTextUri);
 }
-async function request(s:Running,method:string,params:unknown){await s.queue.flush();return invoke<any>('editor_lsp_request',{root:s.root,id:s.config.id,method,params});}
+async function request(s:Running,method:string,params:unknown){await s.queue.flush();return s.invoke<any>('editor_lsp_request',{root:s.root,id:s.config.id,method,params});}
 function attach(s:Running,model:monaco.editor.ITextModel){
   if(!match(s,model)||s.models.has(model.uri.toString())||model.getValueLength()>2*1024*1024||getEditor().files.some(f=>f.large&&canonicalFileUri(f.root,f.path)===model.uri.toString()))return;
   const uri=model.uri.toString();const sync=s.cap.textDocumentSync;const kind=typeof sync==='number'?sync:sync?.change;
@@ -59,6 +59,7 @@ function attach(s:Running,model:monaco.editor.ITextModel){
 }
 export async function startServer(root:string,config:ServerConfig){
   if(servers.has(key(root,config.id)))throw {message:'This language server is already running.'};
+  const invoke=bindEditorInvoke();
   const init=await invoke<Json>('editor_lsp_start',{root,id:config.id,config:{executable:config.executable,args:config.args}});
   if(init.capabilities?.positionEncoding && init.capabilities.positionEncoding!=='utf-16'){
     await invoke('editor_lsp_stop',{root,id:config.id});throw {message:'Server selected unsupported position encoding; UTF-16 is required.'};
@@ -70,7 +71,7 @@ export async function startServer(root:string,config:ServerConfig){
       queueMicrotask(()=>{if(servers.get(key(root,config.id))===s)void stopServer(root,config.id).catch(e=>notice(message(e)));});
     },
   );
-  const s:Running={root,config,cap:init.capabilities??{},queue,disposables:[],models:new Map(),timer:0 as unknown as ReturnType<typeof setInterval>,polling:false,status:'Running'};
+  const s:Running={invoke,root,config,cap:init.capabilities??{},queue,disposables:[],models:new Map(),timer:0 as unknown as ReturnType<typeof setInterval>,polling:false,status:'Running'};
   servers.set(key(root,config.id),s);
   const selector=config.language.split(',').map(l=>l.trim());
   if(s.cap.completionProvider)s.disposables.push(monaco.languages.registerCompletionItemProvider(selector,{
@@ -116,5 +117,5 @@ export async function stopServer(root:string,id:string){
     for(const [uri,ds] of s.models){send(s,'textDocument/didClose',{textDocument:{uri}});for(const d of ds)d.dispose();const m=monaco.editor.getModel(monaco.Uri.parse(uri));if(m)monaco.editor.setModelMarkers(m,id,[]);}
     await s.queue.flush().catch(()=>{});
   }
-  await invoke('editor_lsp_stop',{root,id});
+  if(s)await s.invoke('editor_lsp_stop',{root,id});
 }

@@ -7,18 +7,34 @@ use std::{
     io::{Read, Write},
     path::{Component, Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Mutex, OnceLock,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc, Mutex, OnceLock, RwLock,
     },
 };
 
 const LIMIT: u64 = 32 * 1024 * 1024;
 #[derive(Default)]
 pub struct Editor {
-    roots: Mutex<HashMap<String, HashMap<PathBuf, Arc<File>>>>,
+    roots: Mutex<HashMap<String, Scope>>,
+    next_scope: AtomicU64,
     dirty: Mutex<HashSet<String>>,
     gate: Mutex<()>,
+    scope_gate: RwLock<()>,
     pub exit_pending: AtomicBool,
+}
+struct Scope {
+    id: u64,
+    project: String,
+    runtime: String,
+    grants: HashMap<PathBuf, Arc<File>>,
+}
+// Constructed only by the native bridge; never deserialized from renderer input.
+pub struct GrantRequest {
+    window: String,
+    scope: u64,
+    path: PathBuf,
+    handle: Arc<File>,
+    pub description: String,
 }
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -292,6 +308,32 @@ fn open_directory(path: &Path) -> Result<File> {
         return Err(error("path", "Expected a directory."));
     }
     Ok(file)
+}
+// Canonical aliases are displayed before consent; anchor every canonical ancestor
+// before showing the native dialog. Replacement cannot redirect the granted handle.
+fn open_grant_directory(path: &Path) -> Result<File> {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::fd::AsRawFd;
+        let mut directory = open_directory(Path::new("/"))?;
+        for component in path.components().skip(1) {
+            let Component::Normal(name) = component else {
+                return Err(error("path", "Invalid canonical directory."));
+            };
+            directory = open_directory(
+                &PathBuf::from(format!("/proc/self/fd/{}", directory.as_raw_fd())).join(name),
+            )?;
+        }
+        Ok(directory)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = path;
+        Err(error(
+            "grant",
+            "Native editor grants are unavailable on this platform.",
+        ))
+    }
 }
 // On Linux, hold each directory and address children relative to that open handle.
 // Renaming/replacing ancestors cannot redirect operations outside the selected root.
@@ -622,16 +664,161 @@ fn replace_checked(temp: &Path, target: &Path, original: &[u8], relative: &str) 
     }
 }
 impl Editor {
-    pub fn authorized(&self, window: &str, root: &str) -> Result<PathBuf> {
+    pub fn context(&self, window: &str, project: &str, runtime: &str) -> Result<u64> {
+        if !["codex", "opencode"].contains(&runtime)
+            || (!project.is_empty() && !Path::new(project).is_absolute())
+            || project.chars().any(char::is_control)
+        {
+            return Err(error("project", "Invalid editor context."));
+        }
+        let _guard = self
+            .scope_gate
+            .write()
+            .map_err(|_| error("busy", "Editor is busy."))?;
+        let mut roots = self
+            .roots
+            .lock()
+            .map_err(|_| error("busy", "Editor state unavailable."))?;
+        if let Some(scope) = roots.get(window) {
+            if scope.project == project && scope.runtime == runtime {
+                return Ok(scope.id);
+            }
+        }
+        let id = self.next_scope.fetch_add(1, Ordering::SeqCst) + 1;
+        roots.insert(
+            window.into(),
+            Scope {
+                id,
+                project: project.into(),
+                runtime: runtime.into(),
+                grants: HashMap::new(),
+            },
+        );
+        Ok(id)
+    }
+    pub fn prepare_grant(&self, window: &str, scope: u64, root: &str) -> Result<GrantRequest> {
         let roots = self
             .roots
             .lock()
             .map_err(|_| error("busy", "Editor state unavailable."))?;
-        roots
+        let context = roots
             .get(window)
-            .and_then(|r| r.keys().find(|r| root_label(r) == root))
-            .cloned()
-            .ok_or_else(|| error("project", "Select this project in the editor first."))
+            .filter(|s| s.id == scope)
+            .ok_or_else(|| error("grant", "Editor context changed. Select the folder again."))?;
+        if !Path::new(root).is_absolute() || root.len() > 4096 || root.chars().any(char::is_control)
+        {
+            return Err(error("project", "Select an absolute project folder."));
+        }
+        let path = fs::canonicalize(root).map_err(io)?;
+        if root_label(&path).chars().any(char::is_control) {
+            return Err(error(
+                "path",
+                "Control characters are not allowed in granted paths.",
+            ));
+        }
+        let handle = Arc::new(open_grant_directory(&path)?);
+        let description = format!("Allow editor read/write access to this directory?\n\n{}\n\nWindow: {}\nRuntime: {}\nProject: {}\n\nThis grant expires when the project or runtime changes, the window closes, or CorpsTex exits. Open buffers are retained; return to their project and grant access again to save them. Runtime agent permissions are unchanged.", root_label(&path), window, context.runtime, context.project);
+        Ok(GrantRequest {
+            window: window.into(),
+            scope,
+            path,
+            handle,
+            description,
+        })
+    }
+    pub fn revoke(&self, window: &str, scope: u64) -> Result<u64> {
+        let _guard = self
+            .scope_gate
+            .write()
+            .map_err(|_| error("busy", "Editor is busy."))?;
+        let mut roots = self
+            .roots
+            .lock()
+            .map_err(|_| error("busy", "Editor state unavailable."))?;
+        let context = roots
+            .get_mut(window)
+            .filter(|s| s.id == scope)
+            .ok_or_else(|| error("grant", "Editor context changed."))?;
+        context.id = self.next_scope.fetch_add(1, Ordering::SeqCst) + 1;
+        context.grants.clear();
+        Ok(context.id)
+    }
+    pub fn finish_grant(&self, request: GrantRequest, confirmed: bool) -> Result<String> {
+        let _guard = self
+            .scope_gate
+            .write()
+            .map_err(|_| error("busy", "Editor is busy."))?;
+        let mut roots = self
+            .roots
+            .lock()
+            .map_err(|_| error("busy", "Editor state unavailable."))?;
+        let context = roots
+            .get_mut(&request.window)
+            .filter(|s| s.id == request.scope)
+            .ok_or_else(|| error("grant", "Editor context changed. No access was granted."))?;
+        if !confirmed {
+            return Err(error(
+                "grant",
+                "Folder access cancelled. No access was granted.",
+            ));
+        }
+        let label = root_label(&request.path);
+        context.grants.insert(request.path, request.handle);
+        Ok(label)
+    }
+    fn lease(&self, window: &str, scope: u64, root: &str) -> Result<(PathBuf, Arc<File>)> {
+        let roots = self
+            .roots
+            .lock()
+            .map_err(|_| error("busy", "Editor state unavailable."))?;
+        roots.get(window).filter(|s| s.id == scope)
+            .and_then(|s| s.grants.iter().find(|(r, _)| root_label(r) == root))
+            .map(|(r, f)| (r.clone(), f.clone()))
+            .ok_or_else(|| error("grant", "Folder access is not granted in this editor context. Use Grant editor access in Files. Your buffer is retained."))
+    }
+    pub fn with_authorized<T>(
+        &self,
+        window: &str,
+        scope: u64,
+        root: &str,
+        operation: impl FnOnce(PathBuf) -> Result<T>,
+    ) -> Result<T> {
+        let _guard = self
+            .scope_gate
+            .read()
+            .map_err(|_| error("busy", "Editor is busy."))?;
+        let (path, _lease) = self.lease(window, scope, root)?;
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let current = open_grant_directory(&path)?.metadata().map_err(io)?;
+            let granted = _lease.metadata().map_err(io)?;
+            if current.dev() != granted.dev() || current.ino() != granted.ino() {
+                return Err(error(
+                    "grant",
+                    "Granted directory was replaced. Grant access again.",
+                ));
+            }
+        }
+        operation(path)
+    }
+    #[cfg(test)]
+    fn authorized(&self, window: &str, root: &str) -> Result<PathBuf> {
+        self.lease(window, self.test_scope(window), root)
+            .map(|v| v.0)
+    }
+    #[cfg(test)]
+    fn test_scope(&self, window: &str) -> u64 {
+        self.roots
+            .lock()
+            .unwrap()
+            .get(window)
+            .map(|s| s.id)
+            .unwrap_or(0)
+    }
+    #[cfg(test)]
+    fn request(&self, window: &str, root: &str, action: Action) -> Result<serde_json::Value> {
+        self.request_scoped(window, self.test_scope(window), root, action)
     }
     pub fn dirty(&self, window: &str, dirty: bool) -> Result<()> {
         let mut windows = self
@@ -649,6 +836,9 @@ impl Editor {
         self.dirty.lock().map(|d| !d.is_empty()).unwrap_or(true)
     }
     pub fn detach(&self, window: &str) {
+        let Ok(_guard) = self.scope_gate.write() else {
+            return;
+        };
         if let Ok(mut r) = self.roots.lock() {
             r.remove(window);
         }
@@ -656,40 +846,30 @@ impl Editor {
             d.remove(window);
         }
     }
-    pub fn request(&self, window: &str, root: &str, action: Action) -> Result<serde_json::Value> {
-        if matches!(action, Action::Authorize) {
-            let path = Path::new(root);
-            if !path.is_absolute() {
-                return Err(error("project", "Select an absolute project folder."));
-            }
-            let canonical = fs::canonicalize(path).map_err(io)?;
-            let handle = Arc::new(open_directory(&canonical)?);
-            self.roots
-                .lock()
-                .map_err(|_| error("busy", "Editor state unavailable."))?
-                .entry(window.into())
-                .or_default()
-                .insert(canonical.clone(), handle);
-            return Ok(serde_json::json!({"root":root_label(&canonical)}));
-        }
-        let root = self.authorized(window, root)?;
-        let _lease = self
-            .roots
+    pub fn request_scoped(
+        &self,
+        window: &str,
+        scope: u64,
+        root: &str,
+        action: Action,
+    ) -> Result<serde_json::Value> {
+        let _scope = self
+            .scope_gate
+            .read()
+            .map_err(|_| error("busy", "Editor context unavailable."))?;
+        let _guard = self
+            .gate
             .lock()
-            .map_err(|_| error("busy", "Editor state unavailable."))?
-            .get(window)
-            .and_then(|r| r.get(&root))
-            .cloned()
-            .ok_or_else(|| error("project", "Project was closed."))?;
+            .map_err(|_| error("busy", "Editor is busy."))?;
+        let (root, _lease) = self.lease(window, scope, root)?;
+        if matches!(action, Action::Authorize) {
+            return Ok(serde_json::json!({"root":root_label(&root)}));
+        }
         #[cfg(target_os = "linux")]
         let root = {
             use std::os::fd::AsRawFd;
             PathBuf::from(format!("/proc/self/fd/{}/.", _lease.as_raw_fd()))
         };
-        let _guard = self
-            .gate
-            .lock()
-            .map_err(|_| error("busy", "Editor is busy."))?;
         match action {
             Action::Authorize => unreachable!(),
             Action::List { path } => {
@@ -890,6 +1070,132 @@ impl Editor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn renderer_paths_and_confirmation_flags_do_not_create_grants() {
+        let (e, root) = fixture();
+        let scope = e.context("ungranted", &root, "codex").unwrap();
+        for action in [
+            Action::Authorize,
+            Action::List {
+                path: String::new(),
+            },
+            Action::Read {
+                path: "a".into(),
+                large: false,
+            },
+            Action::Create {
+                path: "a".into(),
+                directory: false,
+            },
+        ] {
+            assert!(e.request_scoped("ungranted", scope, &root, action).is_err());
+        }
+        // Even preparing native consent and a renderer-supplied "approved" field
+        // cannot authorize. Only the native response completion can add a grant.
+        let request = e.prepare_grant("ungranted", scope, &root).unwrap();
+        let action: Action =
+            serde_json::from_value(serde_json::json!({"type":"authorize","approved":true}))
+                .unwrap();
+        assert!(e.request_scoped("ungranted", scope, &root, action).is_err());
+        assert!(e.finish_grant(request, false).is_err());
+        assert!(e
+            .request_scoped("ungranted", scope, &root, Action::Authorize)
+            .is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn grants_are_scoped_and_revocation_rejects_stale_native_confirmations() {
+        let (e, root) = fixture();
+        let first = e.test_scope("main");
+        assert!(e
+            .request_scoped("other", first, &root, Action::Authorize)
+            .is_err());
+        let pending = e.prepare_grant("main", first, &root).unwrap();
+        let second = e.context("main", &root, "opencode").unwrap();
+        assert_ne!(first, second);
+        assert!(e.finish_grant(pending, true).is_err());
+        assert!(e
+            .request_scoped("main", first, &root, Action::Authorize)
+            .is_err());
+        assert!(e
+            .request_scoped("main", second, &root, Action::Authorize)
+            .is_err());
+        let grant = e.prepare_grant("main", second, &root).unwrap();
+        e.finish_grant(grant, true).unwrap();
+        assert!(e.with_authorized("main", second, &root, |_| Ok(())).is_ok());
+        assert_eq!(e.context("main", &root, "opencode").unwrap(), second);
+        let pending = e.prepare_grant("main", second, &root).unwrap();
+        let revoked = e.revoke("main", second).unwrap();
+        assert!(e.finish_grant(pending, true).is_err());
+        assert!(e
+            .with_authorized("main", revoked, &root, |_| Ok(()))
+            .is_err());
+        let pending = e.prepare_grant("main", revoked, &root).unwrap();
+        let other = format!("{root}/other-project");
+        let changed = e.context("main", &other, "opencode").unwrap();
+        assert!(e.finish_grant(pending, true).is_err());
+        let pending = e.prepare_grant("main", changed, &root).unwrap();
+        e.detach("main");
+        let reopened = e.context("main", &other, "opencode").unwrap();
+        assert_ne!(changed, reopened);
+        assert!(e.finish_grant(pending, true).is_err());
+        assert!(e
+            .with_authorized("main", reopened, &root, |_| Ok(()))
+            .is_err());
+        let fresh = Editor::default();
+        let scope = fresh.context("main", &root, "codex").unwrap();
+        assert!(fresh
+            .request_scoped("main", scope, &root, Action::Authorize)
+            .is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn additional_grants_aliases_and_replacements_keep_held_directory_identity() {
+        use std::os::unix::fs::symlink;
+        let (e, root) = fixture();
+        let scope = e.test_scope("main");
+        let extra = Path::new(&root).join("extra");
+        fs::create_dir(&extra).unwrap();
+        fs::write(extra.join("a"), b"original").unwrap();
+        let alias = Path::new(&root).join("alias");
+        symlink(&extra, &alias).unwrap();
+        let request = e
+            .prepare_grant("main", scope, alias.to_str().unwrap())
+            .unwrap();
+        assert_eq!(request.path, extra);
+        assert!(request.description.contains(extra.to_str().unwrap()));
+        let saved = Path::new(&root).join("saved");
+        fs::rename(&extra, &saved).unwrap();
+        fs::create_dir(&extra).unwrap();
+        fs::write(extra.join("a"), b"replacement").unwrap();
+        let canonical = e.finish_grant(request, true).unwrap();
+        let doc = e
+            .request_scoped(
+                "main",
+                scope,
+                &canonical,
+                Action::Read {
+                    path: "a".into(),
+                    large: false,
+                },
+            )
+            .unwrap();
+        assert_eq!(doc["text"], "original");
+        assert!(
+            e.with_authorized("main", scope, &canonical, |_| Ok(()))
+                .is_err(),
+            "LSP must not start in a substituted path"
+        );
+        assert!(
+            e.request_scoped("main", scope, &root, Action::Authorize)
+                .is_ok(),
+            "extra grant preserves project grant"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
     fn fixture() -> (Editor, String) {
         let root = std::env::temp_dir().join(format!(
             "corpstex-editor-{}-{}",
@@ -902,6 +1208,9 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         let root = root.to_str().unwrap().to_owned();
         let editor = Editor::default();
+        let scope = editor.context("main", &root, "codex").unwrap();
+        let grant = editor.prepare_grant("main", scope, &root).unwrap();
+        editor.finish_grant(grant, true).unwrap();
         editor.request("main", &root, Action::Authorize).unwrap();
         (editor, root)
     }
