@@ -32,6 +32,17 @@ export function ApprovalCard({ approval: a, busy, onReply }: { approval: Approva
   const blocked = busy || a.status !== 'ready';
   return <article aria-labelledby={titleId}>
     <h2 id={titleId}>{a.request.method==='session/request_permission' ? 'OpenCode permission request' : client ? `${client.title} — CorpsTex cannot answer` : a.request.method.includes('permissions') ? 'Permission request' : a.request.method.includes('fileChange') || a.request.method === 'applyPatchApproval' ? 'File change approval' : a.request.method.includes('requestUserInput') ? 'Input requested' : a.request.method.includes('elicitation') ? 'MCP request' : a.request.method.includes('commandExecution') || a.request.method === 'execCommandApproval' ? p.networkApprovalContext ? 'Network access approval' : p.kind === 'writeStdin' ? 'Terminal input approval' : 'Command approval' : 'Unsupported server request'}</h2>
+
+    {a.status !== 'ready' && <p role="alert">This server is {a.status}. This request cannot be answered. A response outcome may be unknown; CorpsTex will not retry a decision. Review reconnect or exit to clear the lost connection.</p>}
+    {p.cwd != null && <p><strong>Working directory: </strong>{text(p.cwd)}</p>}
+    {p.command != null && <pre aria-label="Requested command">{text(p.command)}</pre>}
+    {p.toolCall != null && <><h3>Requested tool action</h3><pre>{text(p.toolCall)}</pre></>}
+    {p.networkApprovalContext != null && <><h3>Requested network destination</h3><pre>{text(p.networkApprovalContext)}</pre></>}
+    {p.permissions != null && <><h3>Requested permissions · current turn</h3><pre>{text(p.permissions)}</pre></>}
+    {p.grantRoot != null && <p><strong>Requested write root: </strong>{text(p.grantRoot)}. The server may apply this to the remainder of the session.</p>}
+    {(a.request.method.includes('fileChange') || a.request.method === 'applyPatchApproval') && <><h3>Proposed file changes</h3>{a.item || p.fileChanges ? <pre>{text(a.item ?? p.fileChanges)}</pre> : <p>Codex did not provide file details in the available state. Review the full request before deciding.</p>}</>}
+    {p.reason != null && <p><strong>Reason: </strong>{text(p.reason)}</p>}
+    {a.request.method === 'mcpServer/elicitation/request' && <p>MCP forms and URL flows are not supported yet. You can explicitly decline or cancel this request.</p>}
     <details className="request-context" open={!a.decisions.includes('answers') || undefined}>
     <summary>Request context · {a.root}</summary><dl>
       <dt>Runtime</dt><dd>{a.runtime==='opencode'?'OpenCode':'Codex'}</dd>
@@ -42,16 +53,6 @@ export function ApprovalCard({ approval: a, busy, onReply }: { approval: Approva
       <dt>Request ID</dt><dd>{a.key}</dd>
       <dt>Item / callback</dt><dd>{text(p.itemId ?? p.callId) ?? 'Not reported'}{p.approvalId ? ` / ${text(p.approvalId)}` : ''}</dd>
     </dl></details>
-    {a.status !== 'ready' && <p role="alert">This server is {a.status}. This request cannot be answered. A response outcome may be unknown; CorpsTex will not retry a decision. Review reconnect or exit to clear the lost connection.</p>}
-    {!a.decisions.includes('answers') && <p>Review the reported command, access, and scope before deciding. The originating runtime controls permissions.</p>}
-    {p.reason != null && <p><strong>Reason: </strong>{text(p.reason)}</p>}
-    {p.cwd != null && <p><strong>Working directory: </strong>{text(p.cwd)}</p>}
-    {p.command != null && <pre aria-label="Requested command">{text(p.command)}</pre>}
-    {p.networkApprovalContext != null && <><h3>Requested network destination</h3><pre>{text(p.networkApprovalContext)}</pre></>}
-    {p.permissions != null && <><h3>Requested permissions · current turn</h3><pre>{text(p.permissions)}</pre></>}
-    {p.grantRoot != null && <p><strong>Requested write root: </strong>{text(p.grantRoot)}. The server may apply this to the remainder of the session.</p>}
-    {(a.request.method.includes('fileChange') || a.request.method === 'applyPatchApproval') && <><h3>Proposed file changes</h3>{a.item || p.fileChanges ? <pre>{text(a.item ?? p.fileChanges)}</pre> : <p>Codex did not provide file details in the available state. Review the full request before deciding.</p>}</>}
-    {a.request.method === 'mcpServer/elicitation/request' && <p>MCP forms and URL flows are not supported yet. You can explicitly decline or cancel this request.</p>}
     <details><summary>Full reported request and permission context</summary><pre>{text(a.request)}</pre></details>
     {a.decisions.length === 0 && (client
       ? <p role="alert">The official protocol expects a result only this client could truthfully produce: {client.why} No decision has been sent, and the request stays listed until the runtime resolves it or the connection ends. Stop the turn from the conversation composer to unblock active work.</p>
@@ -173,6 +174,6 @@ export function InlineApprovals({approvals,exiting,busyKeys,invoke,errorText,vis
   }
   return <div className="inline-approvals" ref={host} hidden={!approvals.length}>
     {!shadow&&<p>Approval requested. Open the Approval center to respond.</p>}
-    {shadow&&createPortal(<><link rel="stylesheet" href={stylesheet} onLoad={()=>setStyled(true)}/><section className="inline-queue" aria-label="Approvals for this conversation"><p className="eyebrow">CORPSTEX · TRUSTED CONTROLS</p><h2>Your response is needed</h2><p>These requests are also available in the Approval center.</p>{approvals.map(a=><ApprovalCard key={identity(a)} approval={a} busy={exiting||busyKeys.has(identity(a))} onReply={decision=>void reply(a,decision)}/>)}{feedback&&<p role="status">{feedback}</p>}</section></>,shadow)}
+    {shadow&&createPortal(<><link rel="stylesheet" href={stylesheet} onLoad={()=>setStyled(true)}/><section className="inline-queue" aria-label="Approvals for this conversation"><p className="eyebrow">CORPSTEX · TRUSTED CONTROLS</p>{approvals.map(a=><ApprovalCard key={identity(a)} approval={a} busy={exiting||busyKeys.has(identity(a))} onReply={decision=>void reply(a,decision)}/>)}{feedback&&<p role="status">{feedback}</p>}</section></>,shadow)}
   </div>;
 }

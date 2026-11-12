@@ -1,4 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { uiScale } from './AppZoom';
 import type { Model } from './Conversation';
 import openai from './assets/providers/openai.svg';
 import opencode from './assets/providers/opencode.svg';
@@ -26,13 +27,15 @@ function ProviderMark({model,runtimeName}:{model?:Model;runtimeName:string}) {
   return logos[provider]?<img className="provider-mark" src={logos[provider]} alt="" width={20} height={20}/>:<span className="provider-mark" aria-hidden="true">{provider.slice(0,2).toUpperCase()}</span>;
 }
 function showMenu(node:HTMLDialogElement,trigger:HTMLElement,width:number) {
-  const rect=trigger.getBoundingClientRect();width=Math.min(width,window.innerWidth-24);
-  node.style.width=`${width}px`;node.style.left=`${Math.max(12,Math.min(rect.left,window.innerWidth-width-12))}px`;
+  const scale=uiScale(),rect=trigger.getBoundingClientRect();
+  const viewportWidth=window.innerWidth/scale,viewportHeight=window.innerHeight/scale;
+  width=Math.min(width,viewportWidth-24);
+  node.style.width=`${width}px`;node.style.left=`${Math.max(12,Math.min(rect.left/scale,viewportWidth-width-12))}px`;
   node.style.top='12px';node.dataset.menuOpen='true';
   if(typeof node.showPopover==='function')node.showPopover();else node.showModal();
-  const height=Math.min(node.getBoundingClientRect().height,window.innerHeight-24);
-  const below=window.innerHeight-rect.bottom;
-  node.style.top=`${Math.max(12,Math.min(below>=height+8?rect.bottom+8:rect.top-height-8,window.innerHeight-height-12))}px`;
+  const height=Math.min(node.getBoundingClientRect().height/scale,viewportHeight-24);
+  const below=viewportHeight-rect.bottom/scale;
+  node.style.top=`${Math.max(12,Math.min(below>=height+8?rect.bottom/scale+8:rect.top/scale-height-8,viewportHeight-height-12))}px`;
 }
 function hideMenu(node:HTMLDialogElement|null) {
   if(!node)return;delete node.dataset.menuOpen;

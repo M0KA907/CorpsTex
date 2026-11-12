@@ -1,4 +1,5 @@
 import { WorkspaceIcon } from '../WorkspaceIcon';
+import { uiScale } from '../AppZoom';
 import { WorkspaceDrawer } from '../WorkspaceDrawer';
 import { FolderBrowser } from '../FolderBrowser';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
@@ -51,7 +52,7 @@ export function FileExplorer({root:projectRoot,runtime,hidden,onProject,onNewCon
   }
   function entryMenu(entry:Entry,element:HTMLElement){
     const bounds=element.getBoundingClientRect();
-    setMenuAnchor({x:bounds.right+8,y:bounds.top});setSelected(entry);setDestination(entry.path);setAction('menu');
+    const scale=uiScale();setMenuAnchor({x:bounds.right/scale+8,y:bounds.top/scale});setSelected(entry);setDestination(entry.path);setAction('menu');
   }
   const granted=roots.includes(root);
   const activeFile=files.find(file=>file.id===active);
@@ -79,9 +80,9 @@ export function FileExplorer({root:projectRoot,runtime,hidden,onProject,onNewCon
       })}</nav>
       {!listing.entries.length&&!busy&&granted&&!error&&<p className="explorer-empty">Empty folder</p>}
       {listing.truncated&&<p role="status">First 5,000 entries</p>}
-      {busy&&<p role="status">Working…</p>}{error&&<p role="alert">{error}</p>}
+      {busy&&<p role="status">Working…</p>}{error&&(granted||error!=='Editor access required.')&&<p role="alert">{error}</p>}
     </div>
-    <div className="editor-access-row" data-granted={granted}><WorkspaceIcon name="access"/><span>Editor access <strong>{granted?'Granted':'Not granted'}</strong></span><button type="button" onClick={()=>setAccessOpen(true)} aria-haspopup="dialog">Manage</button></div>
+    <div className="editor-access-row" data-granted={granted}><WorkspaceIcon name="access"/><span>{granted?'Editor access':'Access required'}</span><button type="button" disabled={busy||!root} aria-label={granted?'Manage editor access':'Grant editor access'} onClick={()=>granted?setAccessOpen(true):void grant(root)} aria-haspopup="dialog">{granted?'Manage':'Grant access'}</button></div>
     {accessOpen&&<WorkspaceDrawer title="Editor access" onClose={()=>setAccessOpen(false)}>
       <div className="access-folder"><WorkspaceIcon name="folder" size={22}/><strong>{folderName}</strong><span className="drawer-path">{root||'No project selected'}</span></div>
       <p className="access-scope">This window · {runtime} · expires on project switch or exit</p>

@@ -1,11 +1,13 @@
 import { memo, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
-import Markdown from 'react-markdown';
+import Markdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { parseChart, type ChartData } from './renderData';
 import './rich-content.css';
 import { isLocalImageReference, MessageImage } from './Media';
 
 const colors = ['#d5b67b', '#83a598', '#b8bb26', '#d3869b', '#8ec07c'];
+const markdownPlugins = [remarkGfm];
+const messageUrlTransform = (url:string,key:string) => key==='src'||isLocalImageReference(url)?url:safeMessageUrl(url);
 export function safeMessageUrl(url: string) {
   // Only explicit web links and within-message anchors; never navigate to desktop protocols.
   return /^(https?:\/\/|#)/i.test(url) ? url : '';
@@ -65,10 +67,24 @@ export function ArtifactCard({ source }: { source: string }) {
   </section>;
 }
 
+function CodeBlock({language,source,children}:{language?:string;source:string;children:ReactNode}) {
+  const [copied,setCopied]=useState(false);
+  const [copyError,setCopyError]=useState(false);
+  useEffect(()=>{
+    if(!copied)return;
+    const timer=setTimeout(()=>setCopied(false),1800);
+    return()=>clearTimeout(timer);
+  },[copied]);
+  async function copy() {
+    try { await navigator.clipboard.writeText(source);setCopied(true);setCopyError(false); }
+    catch { setCopyError(true); }
+  }
+  return <div className="code-block"><header><span>{language||'Code'}</span><button type="button" onClick={()=>void copy()} aria-label={copied?'Code copied':'Copy code'}>{copied?'Copied':'Copy'}</button></header><pre tabIndex={0} aria-label={`${language||'Code'} source`}>{children}</pre>{copyError&&<p className="code-copy-note" role="status">Copy unavailable. Select the code to copy it.</p>}</div>;
+}
+
 export const RichContent = memo(function RichContent({ text, streaming = false }: { text: string; streaming?: boolean }) {
-  // Keep oversized output inspectable without building an unbounded Markdown tree.
-  if (text.length > 262144) return <pre className="message-body">{text}</pre>;
-  return <div className={`message-body markdown-body${streaming ? ' stream-chunk' : ''}`}><Markdown remarkPlugins={[remarkGfm]} urlTransform={(url,key)=>key==='src'||isLocalImageReference(url)?url:safeMessageUrl(url)} components={{
+  // Stable renderers preserve code blocks and image state across streamed chunks.
+  const components=useMemo<Components>(()=>({
     a({ href, children }) { if(href && isLocalImageReference(href))return <MessageImage source={href} alt={typeof children==='string'?children:'Returned image'}/>; return href ? <a href={href} target={href.startsWith('#') ? undefined : '_blank'} rel="noopener noreferrer">{children}</a> : <span>{children}</span>; },
     // Message images never fetch remote URLs silently.
     img({ src, alt }) { return <MessageImage source={typeof src==='string'?src:''} alt={alt||'Image'}/>; },
@@ -79,8 +95,12 @@ export const RichContent = memo(function RichContent({ text, streaming = false }
         const language = /(?:^|\s)language-(\S+)/.exec(String(code.properties.className))?.[1];
         const source = code.children.filter(child => child.type === 'text').map(child => child.value).join('').replace(/\n$/, '');
         if (!streaming && language === 'chart') return <ArtifactCard source={source}/>;
+        return <CodeBlock language={language} source={source}>{children}</CodeBlock>;
       }
       return <pre>{children}</pre>;
     },
-  }}>{text}</Markdown></div>;
+  }),[streaming]);
+  // Keep oversized output inspectable without building an unbounded Markdown tree.
+  if (text.length > 262144) return <pre className="message-body">{text}</pre>;
+  return <div className={`message-body markdown-body${streaming ? ' stream-chunk' : ''}`}><Markdown remarkPlugins={markdownPlugins} urlTransform={messageUrlTransform} components={components}>{text}</Markdown></div>;
 });

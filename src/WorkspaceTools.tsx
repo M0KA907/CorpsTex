@@ -1,4 +1,5 @@
 import { WorkspaceIcon } from './WorkspaceIcon';
+import { uiScale } from './AppZoom';
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import { WorkspaceDrawer } from './WorkspaceDrawer';
 
@@ -37,7 +38,7 @@ export function useSidebarWidth(view:View,host:RefObject<HTMLDivElement|null>,on
       change(event.key==='Home'?224:event.key==='End'?maximum:event.key==='Enter'?defaults[view]:width+(event.key==='ArrowLeft'?-16:16),true);
     }}
     onPointerDown={event=>{if(event.button!==0)return;event.preventDefault();event.currentTarget.focus();event.currentTarget.setPointerCapture(event.pointerId);dragging.current=true;}}
-    onPointerMove={event=>{if(dragging.current&&host.current)change(event.clientX-host.current.getBoundingClientRect().left);}}
+    onPointerMove={event=>{if(dragging.current&&host.current)change((event.clientX-host.current.getBoundingClientRect().left)/uiScale());}}
     onPointerUp={event=>{if(!dragging.current)return;dragging.current=false;change(current.current[view],true);event.currentTarget.releasePointerCapture(event.pointerId);}}
     onLostPointerCapture={()=>{if(dragging.current){dragging.current=false;change(current.current[view],true);}}}
   />;

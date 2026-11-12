@@ -97,11 +97,11 @@ const TimelineEntry = memo(function TimelineEntry({ row }: { row: Row }) {
   </li>;
 });
 
-export function TimelineView({ sources, history, project, thread, turn }: { sources: Source[]; history?: Row[]; project: string; thread: string; turn: string }) {
-  const rows = filterTimeline(orderEvents(sources.map(source => source.events)).map(eventRow),project,thread,turn);
-  const older = filterTimeline(history ?? [],project,thread,turn);
+export const TimelineView = memo(function TimelineView({ sources, history, project, thread, turn }: { sources: Source[]; history?: Row[]; project: string; thread: string; turn: string }) {
+  const rows = useMemo(()=>filterTimeline(orderEvents(sources.map(source => source.events)).map(eventRow),project,thread,turn),[sources,project,thread,turn]);
+  const older = useMemo(()=>filterTimeline(history ?? [],project,thread,turn),[history,project,thread,turn]);
   return <>
-    <p className="timeline-note">Live events use client receipt time. Order within each server follows its sequence; cross-server receipt order is approximate. CorpsTex saves no timeline data.</p>
+    <details className="timeline-help"><summary>About timing and ordering</summary><p className="timeline-note">Live events use client receipt time. Order within each server follows its sequence; cross-server receipt order is approximate. CorpsTex saves no timeline data.</p></details>
     {sources.map(source => <div key={timelineKey(source)} className="timeline-notices">
       {source.truncated && <p role="status">{source.runtime ?? 'codex'} · {source.root}: earlier events were evicted from the 256-event / 4 MiB ring. Live activity is incomplete.</p>}
       {source.error && <p role="alert">{source.runtime ?? 'codex'} · {source.root}: {source.error} Shown events may be stale.</p>}
@@ -109,7 +109,7 @@ export function TimelineView({ sources, history, project, thread, turn }: { sour
     {rows.length ? <ol className="timeline-events" aria-label="Live execution events">{rows.map(row => <TimelineEntry key={row.key} row={row}/>)}</ol> : <p className="timeline-note">No execution activity matches these filters.</p>}
     <details className="timeline-history"><summary>Native history · {older.length} snapshots</summary><p className="timeline-note">From the open conversation’s loaded runtime history, in native turn/item order. Client-submitted placeholders are identified in their details. Load earlier messages in the conversation to inspect more. Snapshots can overlap live events; their execution times are unknown.</p><ol className="timeline-events" aria-label="Native activity snapshots">{older.map(row => <TimelineEntry key={row.key} row={row}/>)}</ol></details>
   </>;
-}
+});
 
 export const ExecutionTimeline = memo(function ExecutionTimeline({ projects, history, historyProject, invoke, mode = 'collapsed', onModeChange, active = true }: { active?: boolean; mode?: TimelineMode; onModeChange?: (mode: TimelineMode) => void; projects: TimelineProject[]; history: TimelineHistory | null; historyProject: TimelineProject | null; invoke: Invoke }) {
   const open = mode === 'expanded';
@@ -139,14 +139,14 @@ export const ExecutionTimeline = memo(function ExecutionTimeline({ projects, his
           return {...entry,events:old?.source.events ?? [],truncated:old?.source.truncated ?? false,error:'Activity could not be read. Retry on the next refresh.'};
         }
       }));
-      if (!disposed) setSources(next);
+      if (!disposed) setSources(old=>old.length===next.length&&old.every((source,index)=>source===next[index])?old:next);
       busy = false;
     }
     void refresh(); const timer = window.setInterval(() => { void refresh(); },750);
     return () => {disposed = true; window.clearInterval(timer);};
   },[open,active,bindings,invoke]);
   const native = useMemo(() => open && historyProject && history ? historyRows(historyProject,history) : [],[open,historyProject?.runtime,historyProject?.root,historyProject?.generation,history]);
-  const currentSources = sources.filter(source => projects.some(entry => timelineKey(entry) === timelineKey(source)));
+  const currentSources = useMemo(()=>sources.filter(source => projects.some(entry => timelineKey(entry) === timelineKey(source))),[sources,bindings]);
   const rows = [...currentSources.flatMap(source => source.events.map(eventRow)),...native];
   const projectRows = filterTimeline(rows,project,'','');
   const threads = [...new Set(projectRows.map(row => row.thread).filter(Boolean))];
@@ -158,11 +158,11 @@ export const ExecutionTimeline = memo(function ExecutionTimeline({ projects, his
     }}>
     <summary id="timeline-title" className="panel-heading">Execution timeline</summary>
     {open ? <div className="timeline-body">
-      <div className="timeline-filters">
+      <details className="timeline-filter-controls"><summary>Filter events{project||thread||turn?' · Filters active':''}</summary><div className="timeline-filters">
         <label>Project<select aria-label="Timeline project" value={project} onChange={event=>{setProject(event.target.value);setThread('');setTurn('');}}><option value="">All projects and runtimes</option>{projects.map(entry=><option key={timelineKey(entry)} value={timelineKey(entry)}>{entry.runtime ?? 'codex'} · {entry.root} · {entry.generation}</option>)}</select></label>
         <label>Thread<select aria-label="Timeline thread" value={thread} onChange={event=>{setThread(event.target.value);setTurn('');}}><option value="">All threads / unassigned</option>{[...new Set([...threads,...(thread?[thread]:[])])].map(id=><option key={id}>{id}</option>)}</select></label>
         <label>Turn<select aria-label="Timeline turn" value={turn} onChange={event=>setTurn(event.target.value)}><option value="">All turns / unassigned</option>{[...new Set([...turns,...(turn?[turn]:[])])].map(id=><option key={id}>{id}</option>)}</select></label>
-      </div>
+      </div></details>
       <TimelineView sources={currentSources} history={native} project={project} thread={thread} turn={turn}/>
     </div> : <span className="timeline-closed-note">{projects.length ? 'Live activity and native history' : 'No execution activity'}</span>}
   </details></section>;

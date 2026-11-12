@@ -1,8 +1,8 @@
-.markdown-body { white-space: normal; line-height: 1.75; overflow-wrap: anywhere; min-width: 0; }
+.markdown-body { white-space:normal; font-size:var(--conversation-size,0.9375rem); line-height:1.65; overflow-wrap: anywhere; min-width: 0; }
 .markdown-body > :first-child { margin-top: 0; }
 .markdown-body > :last-child { margin-bottom: 0; }
 .markdown-body h1,.markdown-body h2,.markdown-body h3 { line-height: 1.35; margin: 1.4em 0 .6em; letter-spacing: -.02em; }
-.markdown-body h1 { font-size: 1.6em; } .markdown-body h2 { font-size: 1.35em; } .markdown-body h3 { font-size: 1.15em; }
+.markdown-body h1 { font-size:1.4em; } .markdown-body h2 { font-size:1.2em; } .markdown-body h3 { font-size:1.05em; }
 .markdown-body p { margin: .75em 0; }
 .markdown-body ul,.markdown-body ol { padding-left: 1.6em; }
 .markdown-body li + li { margin-top: .3em; }
@@ -11,11 +11,17 @@
 .markdown-body :not(pre) > code { background: var(--color-raised); padding: .15em .35em; border-radius: 4px; font: .9em var(--font-mono); }
 .message .markdown-body pre,.markdown-body pre,.artifact-source pre { margin: 1em 0; padding: 1em; max-height: 480px; overflow: auto; border: 1px solid var(--color-border-soft); border-radius: var(--radius-md); background: var(--color-canvas); white-space: pre; overflow-wrap: normal; font: .85em/1.65 var(--font-mono); }
 .markdown-body pre code { font: inherit; }
+.code-block { margin:1rem 0; min-width:0; border:1px solid var(--color-border-soft); border-radius:var(--radius-sm); background:var(--color-canvas); overflow:hidden; }
+.code-block > header { display:flex; align-items:center; justify-content:space-between; gap:1rem; min-height:2rem; padding:.2rem .75rem; border-bottom:1px solid var(--color-border-soft); color:var(--color-muted); font:var(--text-xs)/1.5 var(--font-ui); }
+.code-block > header > span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.code-block > header > button { flex:none; min-height:1.75rem; padding:.2rem .4rem; border-color:transparent; background:transparent; font:inherit; color:var(--color-muted); }
+.message .code-block > pre { margin:0; padding:.85rem 1rem; border:0; border-radius:0; font:var(--text-sm)/1.65 var(--font-mono); }
+.code-block .code-copy-note { padding:0 1rem .75rem; font-size:var(--text-xs); color:var(--color-muted); }
 .markdown-body hr { border: 0; border-top: 1px solid var(--color-border-soft); margin: 1.5em 0; }
 .rich-table { max-width: 100%; overflow-x: auto; margin: 1em 0; }
 .rich-table table { border-collapse: collapse; min-width: 100%; font-size: .9em; }
-.rich-table th,.rich-table td { text-align: left; padding: .6em .8em; border: 1px solid var(--color-border-soft); }
-.rich-table th { background: var(--color-raised); font-weight: 600; }
+.rich-table th,.rich-table td { text-align:left; padding:.6em .8em; border:0; border-bottom:1px solid var(--color-border-soft); vertical-align:top; }
+.rich-table th { background:var(--color-surface); font-weight:600; }
 .markdown-body input[type=checkbox] { width: auto; margin-right: .5em; accent-color: var(--color-accent); }
 .artifact-card { margin: 1.2em 0; padding: 16px; border: 1px solid var(--color-border-soft); border-radius: var(--radius-md); background: var(--color-canvas); }
 .artifact-card header,.artifact-dialog header { display: flex; justify-content: space-between; align-items: start; gap: 16px; }
@@ -33,7 +39,7 @@
 .chart-preview figcaption strong { margin-left: 12px; color: var(--color-text); }
 .chart-inspector { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 8px 0; font-size: 12px; }
 .chart-inspector select { min-width: 0; max-width: 100%; min-height: 36px; color: var(--color-text); background: var(--color-raised); border: 1px solid var(--color-border-soft); border-radius: var(--radius-sm); padding: 6px 10px; font: inherit; }
-.artifact-dialog { position: fixed; margin: auto; width: min(1000px,calc(100vw - 32px)); max-width: calc(100vw - 32px); max-height: calc(100dvh - 32px); padding: 24px; overflow: auto; color: var(--color-text); background: var(--color-surface); border: 1px solid var(--color-border-soft); border-radius: var(--radius-lg); box-shadow: var(--shadow-popover); }
+.artifact-dialog { position: fixed; margin: auto; width: min(1000px,calc(var(--app-width,100vw) - 32px)); max-width: calc(var(--app-width,100vw) - 32px); max-height: calc(var(--app-height,100dvh) - 32px); padding: 24px; overflow: auto; color: var(--color-text); background: var(--color-surface); border: 1px solid var(--color-border-soft); border-radius: var(--radius-lg); box-shadow: var(--shadow-popover); }
 .artifact-dialog::backdrop { background: #141311b0; }
 @media(max-width:500px) { .artifact-card { padding: 12px; } .artifact-card header { flex-direction: column; gap: 4px; } .artifact-dialog { padding: 16px; } }
 

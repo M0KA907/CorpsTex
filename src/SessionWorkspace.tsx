@@ -52,10 +52,18 @@ export function SessionWorkspace(props:Props) {
   useEffect(()=>{void setEditorContext(props.workspaceRoot,props.runtime??'codex').catch(e=>setNotice(typeof e?.message==='string'?e.message:'Editor access could not be initialized.'));},[props.workspaceRoot,props.runtime]);
   const sidebarView=editor.sidebar;
   const [sidebarFlipping,setSidebarFlipping]=useState(false);
+  const lastActiveFile=useRef(editor.active);
+  if(editor.active)lastActiveFile.current=editor.active;
   function setSidebarView(view:'conversations'|'files') {
     if(view===sidebarView)return;
     const reduced=props.preferences.motion==='reduced'||window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    setSidebarFlipping(!reduced);setEditorSidebar(view);
+    setSidebarFlipping(!reduced);
+    if(view==='conversations')setActiveFile(null);
+    else {
+      const file=editor.files.find(file=>file.id===lastActiveFile.current)??editor.files.at(-1);
+      if(file)setActiveFile(file.id);
+    }
+    setEditorSidebar(view);
     requestAnimationFrame(()=>host.current?.querySelector<HTMLButtonElement>(`${view==='files'?'.file-explorer':'.session-focused .projects'} .sidebar-navigation [aria-current=page]`)?.focus());
   }
   useEffect(()=>{

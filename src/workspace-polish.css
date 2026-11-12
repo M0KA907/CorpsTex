@@ -1,6 +1,6 @@
 /* Final-layer composer refinement: the writing surface and its control pills.
    Loaded last on purpose; these declarations win without specificity games. */
-.composer-placeholder form { border-radius:0.9rem; }
+.composer-placeholder form { border-radius:var(--radius-md); }
 .composer-tools { row-gap:0.35rem; }
 .composer-tools .model-controls { padding-left:0.6rem; border-left:1px solid var(--color-border-soft); }
 .composer-tools .model-controls select { min-height:2rem; padding:0.25rem 1.7rem 0.25rem 0.55rem; background-color:transparent; border-color:transparent; color:var(--color-muted); font-size:0.72rem; }

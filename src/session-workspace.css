@@ -1,6 +1,6 @@
 /* Session geometry: tab strip above, sidebar + conversation below, ledger last.
    Conversation surfaces keep their theme tokens; this file owns placement only. */
-.shell:has(.session-workspace) { grid-template-columns:minmax(0,1fr); grid-template-rows:auto minmax(0,1fr) auto; grid-template-areas:'header' 'sessions' 'footer'; height:100dvh; }
+.shell:has(.session-workspace) { grid-template-columns:minmax(0,1fr); grid-template-rows:auto minmax(0,1fr) auto; grid-template-areas:'header' 'sessions' 'footer'; height:var(--app-height,100dvh); }
 .session-workspace { grid-area:sessions; min-height:0; min-width:0; display:grid; grid-template-columns:var(--sidebar-width) minmax(0,1fr); grid-template-rows:auto minmax(0,1fr) auto; grid-template-areas:'sidebar tabs' 'sidebar primary' 'sidebar ledger'; overflow:hidden; }
 .session-toolbar { grid-area:tabs; min-width:0; display:flex; align-items:flex-end; gap:0.35rem; padding:0.5rem 0.75rem 0; }
 .session-tabs { display:flex; overflow-x:auto; min-width:0; scrollbar-width:none; }
@@ -48,5 +48,5 @@
  .session-workspace .thread-empty,.session-workspace .more-threads { order:6; padding:0; }
  .session-workspace .composer-placeholder { max-height:55%; }
  .session-workspace .model-controls { gap:0.35rem; }
- .session-workspace .usage-rail { max-height:4.5rem; overflow:auto; }
+ .session-workspace .usage-rail { max-height:25dvh; overflow:auto; }
 }

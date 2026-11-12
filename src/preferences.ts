@@ -15,7 +15,7 @@ export type Preferences = {
   texture: 'on' | 'off';
   surfaces: 'glass' | 'solid';
 };
-export const defaults: Preferences = { showApprovalCenter: true, activityPreset: 'orbit', activityDisplay: 'bar', palette: 'charcoal', accent: 'gold', density: 'comfortable', textSize: 'medium', width: 'focused', motion: 'system', background: 'animated', texture: 'on', surfaces: 'glass' };
+export const defaults: Preferences = { showApprovalCenter: true, activityPreset: 'minimal', activityDisplay: 'compact', palette: 'charcoal', accent: 'gold', density: 'comfortable', textSize: 'medium', width: 'focused', motion: 'system', background: 'animated', texture: 'on', surfaces: 'glass' };
 const choices = { activityPreset: ['orbit','pulse','wave','dots','scan','steps','ribbon','beacon','matrix','minimal'], activityDisplay: ['bar','compact','hidden'], palette: ['charcoal','midnight','forest'], accent: ['gold','mint','blue'], density: ['comfortable','compact'], textSize: ['small','medium','large'], width: ['focused','wide'], motion: ['system','reduced'], background: ['animated','static','off'], texture: ['on','off'], surfaces: ['glass','solid'] };
 const storageKey = 'corpstex.appearance.v1';
 export function parsePreferences(raw: string | null): Preferences {

@@ -37,7 +37,11 @@ export const invoke:Invoke = async(command,args) => {
   }
   return rawInvoke(command,args);
 };
-export function message(error:unknown):string {return typeof error==='object' && error!==null && 'message' in error ? String(error.message) : 'Editor operation failed. Your buffer has been retained.';}
+export function message(error:unknown):string {
+  const text=typeof error==='object'&&error!==null&&'message' in error?String(error.message):'Editor operation failed.';
+  if(text.startsWith('Folder access is not granted in this editor context.'))return 'Editor access required.';
+  return text.replace(/ (?:Your (?:edited )?buffer (?:is|has been) retained\.|your buffer is retained\.)/gi,'');
+}
 export type Disk = {text:string;revision:string;encoding:string;bom:boolean;bytes:number};
 export type FileTab = {id:string;root:string;path:string;project:string;runtime:'codex'|'opencode';unloaded?:boolean;recoveryUnsaved?:boolean;view?:EditorView;disk:Disk;text:string;preview:boolean;large:boolean;conflict?:Disk;missing?:string;saving?:boolean;saveError?:string;managing?:boolean;cursor?:{lineNumber:number;column:number}};
 export type Options = {theme:string;fontFamily:string;fontSize:number;ligatures:boolean;tabSize:number;insertSpaces:boolean;minimap:boolean;wrap:boolean;preview:boolean};
@@ -106,7 +110,9 @@ function emit(next:Partial<Snapshot>){
   for(const l of listeners)l();
   if((next.files||'active' in next||'sidebar' in next||'recovery' in next)&&!snapshot.recovery&&typeof window!=='undefined'){clearTimeout(persistTimer);persistTimer=setTimeout(persistEditorSession,350);}
 }
-export function useEditor(){return useSyncExternalStore(callback=>{listeners.add(callback);return()=>{listeners.delete(callback);};},()=>snapshot,()=>serverSnapshot);}
+function subscribe(callback:()=>void){listeners.add(callback);return()=>{listeners.delete(callback);};}
+export function useEditor(){return useSyncExternalStore(subscribe,()=>snapshot,()=>serverSnapshot);}
+export function useEditorSettings(){return useSyncExternalStore(subscribe,()=>snapshot.settings,()=>serverSnapshot.settings);}
 export const getEditor=()=>snapshot;
 export const dirty=(f:FileTab)=>f.text!==f.disk.text;
 export const fs=<T,>(root:string,action:Record<string,unknown>)=>invoke<T>('editor_request',{root,action});

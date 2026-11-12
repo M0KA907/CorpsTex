@@ -1,3 +1,4 @@
+import { AppZoom } from './AppZoom';
 import { Startup, useWelcome } from './Startup';
 import { FolderBrowser } from './FolderBrowser';
 import { Diagnostics } from './Diagnostics';
@@ -202,7 +203,9 @@ export default function App() {
           for (const key of resolvedApprovals.current) if (!keys.has(key)) resolvedApprovals.current.delete(key);
           window.clearTimeout(deadline);
           setStartup('ready');
-          setView({...next,approvals:next.approvals.filter(a=>!resolvedApprovals.current.has(JSON.stringify([a.runtime ?? 'codex',a.root,a.generation,a.ticket])))}); setPollFailure('');
+          const filtered={...next,approvals:next.approvals.filter(a=>!resolvedApprovals.current.has(JSON.stringify([a.runtime ?? 'codex',a.root,a.generation,a.ticket])))};
+          // Keep polling approvals and lifecycle state without redrawing an unchanged shell.
+          setView(previous=>JSON.stringify(previous)===JSON.stringify(filtered)?previous:filtered); setPollFailure('');
         }
       } catch {
         if (!disposed) {
@@ -267,10 +270,12 @@ export default function App() {
       <div className="startup-workspace" inert={showStartup}>
       <a className="skip-link" href="#workspace" onClick={event=>{event.preventDefault();document.querySelector<HTMLElement>('.session-focused .workspace')?.focus();}}>Skip to workspace</a>
       <header className="app-header">
+        <AppZoom/>
         <button className="sidebar-toggle" type="button" aria-expanded={sidebarOpen} aria-label={sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'} title="Toggle sidebar (Ctrl+B)" onClick={()=>setSidebarOpen(open=>!open)}><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M9.5 4v16"/></svg></button>
         <div className="identity">
           <span className="wordmark">CorpsTex</span>
         </div>
+        <div className="header-context" title={activeRoot || 'No project selected'}><strong>{activeRoot.split(/[\\/]/).filter(Boolean).at(-1)||'Choose project'}</strong><span>{runtimeName}</span></div>
         <Diagnostics suppressed={view.exitRequested||view.approvals.length>0||settingsOpen||browserOpen}/>
         <button className="settings-launcher" type="button" onClick={()=>setSettingsOpen(true)} aria-haspopup="dialog" aria-expanded={settingsOpen} aria-label="Personal settings" title="Personal settings"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="m9 3-1 3-3 1-2 5 2 5 3 1 1 3h6l1-3 3-1 2-5-2-5-3-1-1-3Z"/><circle cx="12" cy="12" r="3.5"/></svg></button>
         {(pollFailure||!connected)&&<p className="connection" role="status">

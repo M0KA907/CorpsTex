@@ -1,13 +1,13 @@
 /* Trusted controls deliberately do not inherit theme tokens or scoped custom CSS. */
 :host { color-scheme: dark; font: 14px/1.6 'Segoe UI', 'Noto Sans', sans-serif; }
 * { box-sizing: border-box; }
-dialog { position: fixed; inset: 0 0 0 auto; margin: 0; width: min(560px, 100vw); max-width: 100vw; height: 100dvh; max-height: 100dvh; overflow: auto; background: #242424; color: #ebdbb2; border: 0; border-left: 2px solid #83a598; border-radius: 0; padding: 24px; font: 14px/1.6 'Segoe UI', 'Noto Sans', sans-serif; box-shadow: -16px 0 48px #0006; animation: drawer-in 180ms ease-out; }
+dialog { position: fixed; inset: 0 0 0 auto; margin: 0; width: min(560px, var(--app-width,100vw)); max-width: var(--app-width,100vw); height: var(--app-height,100dvh); max-height: var(--app-height,100dvh); overflow: auto; background: #242424; color: #ebdbb2; border: 0; border-left: 2px solid #83a598; border-radius: 0; padding: 24px; font: 14px/1.6 'Segoe UI', 'Noto Sans', sans-serif; box-shadow:none; animation: drawer-in 180ms ease-out; }
 @keyframes drawer-in { from { transform: translateX(100%); } to { transform: translateX(0); } }
 @media (prefers-reduced-motion: reduce) { dialog { animation: none; } }
 .shortcut-hint { font-size: 12px; color: #bdae93; }
-dialog::backdrop { background: #141414e8; }
+dialog::backdrop { background:#141414b0; }
 header { display: flex; align-items: start; justify-content: space-between; gap: 16px; }
-h1 { font-size: 24px; margin: 0; } h2 { font-size: 19px; } h3 { font-size: 15px; }
+h1 { font-size:20px; margin: 0; } h2 { font-size:16px; } h3 { font-size: 15px; }
 p { margin: 12px 0; } .eyebrow { font: 11px/1.5 monospace; letter-spacing: .08em; color: #bdae93; margin: 0; }
 nav { display: grid; gap: 8px; max-height: 160px; overflow: auto; margin: 16px 0; }
 button, input, select { border: 1px solid #80756b; background: #32302f; color: #ebdbb2; border-radius: 4px; padding: 8px 12px; font: inherit; }
@@ -25,15 +25,15 @@ fieldset { margin: 12px 0; border: 1px solid #80756b; } label { display: block; 
 [role=alert] { border-left: 3px solid #fabd2f; padding-left: 12px; }
 @media (max-width: 500px) { dialog { padding: 16px; } dl { grid-template-columns: 1fr; gap: 0; } dd { margin-bottom: 8px; } .actions { flex-direction: column; } }
 
-.launcher { position: fixed; right: 16px; top: 12px; z-index: 5; }
+.launcher { position:fixed; right:16px; top:7px; z-index:5; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
 
 /* A steady ring signals actionable requests without competing with keyboard focus. */
-.launcher[data-pending="true"] { border-color: #d5b67b; box-shadow: 0 0 0 1px #d5b67b40, 0 0 14px #d5b67b24; }
-.launcher { min-height: 34px; padding: 6px 12px; border-radius: 8px; font-size: 13px; }
+.launcher[data-pending="true"] { border-color:#d5b67b; background:#3b352a; }
+.launcher { min-height:34px; padding:6px 12px; border-radius:4px; font-size:13px; }
 .launcher:focus-visible { outline: 3px solid #83a598; outline-offset: 4px; }
 
-.inline-queue { padding: 20px; border: 1px solid #d5b67b; border-radius: 12px; background: #242424; color: #ebdbb2; box-shadow: 0 0 24px #d5b67b14; }
+.inline-queue { padding:16px; border:1px solid #d5b67b; border-left-width:3px; border-radius:4px; background:#242424; color:#ebdbb2; }
 .inline-queue h2 { margin-top: 8px; }
 .inline-queue article { padding: 6px; max-height: var(--approval-viewport); overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
 .inline-queue article > h2 { position: sticky; top: 0; z-index: 1; background: #242424; margin: 0; padding: 4px 0; }
@@ -44,7 +44,7 @@ fieldset { margin: 12px 0; border: 1px solid #80756b; } label { display: block; 
 
 .question-progress { color: #c8bfb5; font-size: 12px; }
 .request-context { margin: 12px 0; font-size: 12px; overflow-wrap: anywhere; }
-.question-card { min-width: 0; padding: 16px; margin: 20px 0; border-color: #635c55; border-radius: 8px; }
+.question-card { min-width: 0; padding: 16px; margin: 20px 0; border-color: #635c55; border-radius:4px; }
 .question-card legend { padding: 0 6px; font-weight: 600; }
 .question-number { color: #d5b67b; font-variant-numeric: tabular-nums; }
 .question-prompt { margin: 0 0 16px; font-size: 16px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }

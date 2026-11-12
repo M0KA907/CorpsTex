@@ -1,24 +1,23 @@
-import { useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import type * as Monaco from 'monaco-editor/editor/editor.api';
-import { acceptDisk, acceptMerge, dirty, getEditor, language, loadRecoveredFile, message, notice, resolveOptions, saveFile, updateFile, useEditor, type FileTab } from './state';
+import { acceptDisk, acceptMerge, dirty, getEditor, language, loadRecoveredFile, message, notice, resolveOptions, saveFile, updateFile, useEditorSettings, type FileTab } from './state';
 
 const views=new Map<string,Monaco.editor.ICodeEditorViewState|null>();
 export function pruneEditorViews(ids:Set<string>){for(const id of views.keys())if(!ids.has(id))views.delete(id);}
-export function EditorSurface({file,visible=true}:{file:FileTab;visible?:boolean}){
+export const EditorSurface=memo(function EditorSurface({file,visible=true}:{file:FileTab;visible?:boolean}){
   if(file.unloaded)return <section className="source-editor" aria-label={`Recovered reference: ${file.path}`}>
-    <header className="editor-heading"><strong>{file.path}</strong></header>
-    <div className="editor-warning"><p>Restored tab reference only. No file contents or folder permissions were restored.</p>
-      {file.recoveryUnsaved&&<p role="alert">This tab had unsaved edits. Their text was not stored and is unrecoverable.</p>}
-      <p>Select Files and explicitly grant access to {file.root} for {file.runtime} · {file.project}. Then load the current saved file from disk.</p>
+    <header className="editor-heading"><strong title={`${file.runtime} · ${file.project} · ${file.root}`}>{file.path}</strong></header>
+    <div className="editor-warning">
+      {file.recoveryUnsaved&&<p role="alert">Previous unsaved edits cannot be recovered.</p>}
       {file.missing&&<p role="alert">{file.missing}</p>}
-      <button type="button" disabled={file.saving} onClick={()=>void loadRecoveredFile(file.id)}>{file.saving?'Loading…':'Load current saved file'}</button>
+      <button type="button" disabled={file.saving} onClick={()=>void loadRecoveredFile(file.id)}>{file.saving?'Loading…':'Load from disk'}</button>
     </div>
   </section>;
   return <LoadedSurface file={file} visible={visible}/>;
-}
+});
 function LoadedSurface({file,visible}:{file:FileTab;visible:boolean}){
   const host=useRef<HTMLDivElement>(null);const editor=useRef<Monaco.editor.IStandaloneCodeEditor|null>(null);
-  const {settings}=useEditor();const options=resolveOptions(settings,file.root);const current=useRef(file);current.current=file;
+  const settings=useEditorSettings();const options=resolveOptions(settings,file.root);const current=useRef(file);current.current=file;
   const shown=useRef(visible);shown.current=visible;
   const [loading,setLoading]=useState(true);const [failure,setFailure]=useState('');const [position,setPosition]=useState('Ln 1, Col 1');
   useEffect(()=>{
@@ -39,13 +38,16 @@ function LoadedSurface({file,visible}:{file:FileTab;visible:boolean}){
       const code=editor.current;const savedView=views.get(file.id);code.restoreViewState(savedView??null);
       if(!savedView&&current.current.view){code.setSelection(current.current.view.selection);code.setScrollPosition({scrollTop:current.current.view.scrollTop,scrollLeft:current.current.view.scrollLeft});}
       else if(current.current.cursor&&!savedView){code.setPosition(current.current.cursor);code.revealPositionInCenter(current.current.cursor);}
-      const change=model.onDidChangeContent(()=>{const f=current.current;if(model.getValue()!==f.text)updateFile(f.id,{text:model.getValue(),preview:false});});
-      const captureView=()=>{const selection=code.getSelection();if(selection)updateFile(file.id,{view:{selection:{startLineNumber:selection.startLineNumber,startColumn:selection.startColumn,endLineNumber:selection.endLineNumber,endColumn:selection.endColumn},scrollTop:code.getScrollTop(),scrollLeft:code.getScrollLeft()}});};
-      const selection=code.onDidChangeCursorSelection(captureView);const scroll=code.onDidScrollChange(captureView);
-      const cursor=code.onDidChangeCursorPosition(event=>{updateFile(file.id,{cursor:event.position});setPosition(`Ln ${event.position.lineNumber}, Col ${event.position.column}`);});
+      const change=model.onDidChangeContent(()=>{const f=current.current;const text=model.getValue();if(text!==f.text)updateFile(f.id,{text,preview:false});});
+      let viewFrame:number|null=null;
+      // Cursor, selection and scroll often fire together; publish one snapshot per frame.
+      const captureView=()=>{const selection=code.getSelection();const cursor=code.getPosition();if(selection&&cursor){updateFile(file.id,{cursor,view:{selection:{startLineNumber:selection.startLineNumber,startColumn:selection.startColumn,endLineNumber:selection.endLineNumber,endColumn:selection.endColumn},scrollTop:code.getScrollTop(),scrollLeft:code.getScrollLeft()}});setPosition(`Ln ${cursor.lineNumber}, Col ${cursor.column}`);}};
+      const scheduleView=()=>{if(viewFrame===null)viewFrame=requestAnimationFrame(()=>{viewFrame=null;captureView();});};
+      const selection=code.onDidChangeCursorSelection(scheduleView);const scroll=code.onDidScrollChange(scheduleView);
+      const cursor=code.onDidChangeCursorPosition(scheduleView);
       code.addCommand(monaco.KeyMod.CtrlCmd|monaco.KeyCode.KeyS,()=>void saveFile(file.id));
       if(shown.current&&document.activeElement?.getAttribute('role')!=='tab'&&!document.querySelector('dialog[open]'))code.focus();setLoading(false);
-      cleanup=()=>{views.set(file.id,code.saveViewState());captureView();change.dispose();cursor.dispose();selection.dispose();scroll.dispose();for(const subscription of labelSubscriptions)subscription.dispose();if(diff)diff.dispose();else code.dispose();original?.dispose();editor.current=null;};
+      cleanup=()=>{if(viewFrame!==null)cancelAnimationFrame(viewFrame);views.set(file.id,code.saveViewState());captureView();change.dispose();cursor.dispose();selection.dispose();scroll.dispose();for(const subscription of labelSubscriptions)subscription.dispose();if(diff)diff.dispose();else code.dispose();original?.dispose();editor.current=null;};
     }).catch(e=>{if(!disposed){setFailure(message(e));setLoading(false);}});
     return()=>{disposed=true;cleanup();};
   },[file.id,file.root,file.path,file.conflict?.revision]);
@@ -66,10 +68,10 @@ function LoadedSurface({file,visible}:{file:FileTab;visible:boolean}){
   useEffect(()=>{if(file.cursor&&editor.current&&getEditor().active===file.id){const pos=editor.current.getPosition();if(pos?.lineNumber!==file.cursor.lineNumber||pos.column!==file.cursor.column){editor.current.setPosition(file.cursor);editor.current.revealPositionInCenter(file.cursor);}}},[file.cursor]);
   return <section className="source-editor" aria-label={`Editing ${file.path}`}>
     <header className="editor-heading"><div><strong title={file.root+'/'+file.path}>{file.path}</strong></div><button type="button" disabled={!dirty(file)||file.saving||file.managing||Boolean(file.conflict||file.missing)} onClick={()=>void saveFile(file.id)}>{file.saving?'Saving…':'Save · Ctrl+S'}</button></header>
-    {file.saveError&&<p className="editor-conflict" role="alert">Save failed: {file.saveError} Your buffer is retained.</p>}
-    {file.conflict&&<div className="editor-conflict" role="alert"><strong>Disk changed — your buffer is preserved.</strong><p>Disk version on the left; editable merge result on the right. On narrow screens the diff is inline. Review changes before accepting.</p><button type="button" onClick={()=>acceptDisk(file.id)}>Load disk version</button><button type="button" onClick={()=>acceptMerge(file.id)}>Accept edited merge result</button></div>}
-    {file.missing&&<p className="editor-conflict" role="alert">{file.missing} Buffer retained. Restore the file externally to continue saving, or copy its contents into a new file.</p>}
-    {file.recoveryUnsaved&&<p className="editor-warning">Previous unsaved edits were not stored and could not be recovered. This is the current saved file.</p>}
+    {file.saveError&&<p className="editor-conflict" role="alert">Save failed: {file.saveError}</p>}
+    {file.conflict&&<div className="editor-conflict" role="alert"><strong>File changed on disk</strong><button type="button" onClick={()=>acceptDisk(file.id)}>Load disk version</button><button type="button" onClick={()=>acceptMerge(file.id)}>Use edited version</button></div>}
+    {file.missing&&<p className="editor-conflict" role="alert">{file.missing}</p>}
+    {file.recoveryUnsaved&&<p className="editor-warning">Unsaved edits unavailable · showing saved file</p>}
     {file.large&&<p className="editor-warning">Large file mode · LSP and minimap disabled · maximum 32 MiB</p>}
     {loading&&<p className="editor-warning" role="status">Loading editor…</p>}
     {failure?<p role="alert">{failure}</p>:<div className="monaco-host" ref={host}/>}
