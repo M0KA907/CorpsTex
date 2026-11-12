@@ -12,46 +12,49 @@
   <a href="LICENSE">License</a>
 </p>
 
----
-
-### Overview
-
-CorpsTex combines coding-agent conversations, project files, and development tools in a customizable Linux desktop application.
-
-### Features
-
-- **Projects & sessions** — Work across projects with organized conversations and session tabs.
-- **Files & editor** — Browse and edit project files without leaving the workspace.
-- **Agent activity** — Follow streaming responses, tool output, and execution history.
-- **Permissions** — Review agent actions through a central approval interface.
-- **Appearance** — Customize themes, colors, and typography.
-
 ### Installation
+**[Download CorpsTex from GitHub Releases](https://github.com/M0KA907/CorpsTex/releases/latest)**
 
-CorpsTex provides **Linux x86_64** builds as an Arch Linux package, AppImage, and portable archive.
+**Install with an AI assistant** — Copy this prompt into your coding assistant:
 
-**[Get CorpsTex from GitHub Releases](https://github.com/M0KA907/CorpsTex/releases)**
-
-> [!IMPORTANT]
-> Install and configure [Codex](https://github.com/openai/codex) or [OpenCode](https://opencode.ai/) separately. CorpsTex uses the existing runtime on your system.
+> Install CorpsTex on my Linux x86_64 system using the latest release from https://github.com/M0KA907/CorpsTex/releases. Use the Arch `.pkg.tar.zst` on Arch-based systems or the `.AppImage` otherwise. Verify the download against `SHA256SUMS`, explain what will change, and ask before running commands that require sudo. Do not install Codex or OpenCode for me.
 
 <details>
-<summary><strong>Available package formats</strong></summary>
+<summary><strong>Arch Linux</strong></summary>
 
-- **Arch Linux:** `.pkg.tar.zst`
-- **AppImage:** `.AppImage`
-- **Portable:** `.tar.gz`
+Download the `.pkg.tar.zst` release file, then run from its download directory:
 
-Choose a package from the Releases page that matches your system.
+```bash
+sudo pacman -U ./corpstex-*.pkg.tar.zst
+```
+
+Launch CorpsTex from your application menu or run `corpstex`.
 
 </details>
+
+<details>
+<summary><strong>AppImage</strong></summary>
+
+Download the `.AppImage` release file, then run from its download directory:
+
+```bash
+chmod +x CorpsTex_*.AppImage
+./CorpsTex_*.AppImage
+```
+
+No system-wide installation is required.
+
+</details>
+
+> [!IMPORTANT]
+> Install and configure [Codex](https://github.com/openai/codex) or [OpenCode](https://opencode.ai/) separately. CorpsTex uses the runtime already installed on your system.
 
 ### Project status
 
 > [!NOTE]
 > CorpsTex is in active development. Some runtime capabilities are not yet supported in the desktop interface.
 
-Bugs and feature requests can be tracked through [GitHub Issues](https://github.com/M0KA907/CorpsTex/issues).
+Report bugs and request features through [GitHub Issues](https://github.com/M0KA907/CorpsTex/issues).
 
 ---
 
