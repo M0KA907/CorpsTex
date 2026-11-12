@@ -17,7 +17,7 @@
 
 **Install with an AI assistant** — Copy this prompt into your coding assistant:
 
-> Install CorpsTex on my Linux x86_64 system using the latest release from https://github.com/M0KA907/CorpsTex/releases. Use the Arch `.pkg.tar.zst` on Arch-based systems or the `.AppImage` otherwise. Verify the download against `SHA256SUMS`, explain what will change, and ask before running commands that require sudo. Do not install Codex or OpenCode for me.
+> Install CorpsTex on my system using the latest release from https://github.com/M0KA907/CorpsTex/releases. Use the Arch `.pkg.tar.zst` on Arch-based systems or the `.AppImage` otherwise. Verify the download against `SHA256SUMS`, explain what will change, and ask before running commands that require sudo. Do not install Codex or OpenCode for me.
 
 <details>
 <summary><strong>Arch Linux</strong></summary>
