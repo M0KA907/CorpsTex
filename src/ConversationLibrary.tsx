@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { memo, useDeferredValue, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { Thread } from './Conversation';
 
@@ -29,8 +30,8 @@ export function groupThreads(threads: Thread[], pinned: ReadonlySet<string>, que
   for (const group of libraryGroups) groups[group].sort((a, b) => threadTime(b) - threadTime(a));
   return groups;
 }
-type Props = {scope:string;threads:Thread[];selected:string|null;disabled:boolean;ready:boolean;hasMore:boolean;loading:boolean;onMore:()=>void;onOpen:(thread:Thread)=>void};
-export const ConversationLibrary = memo(function ConversationLibrary({scope,threads,selected,disabled,ready,hasMore,loading,onMore,onOpen}:Props) {
+type Props = {actions?:ReactNode;scope:string;threads:Thread[];selected:string|null;disabled:boolean;ready:boolean;hasMore:boolean;loading:boolean;onMore:()=>void;onOpen:(thread:Thread)=>void};
+export const ConversationLibrary = memo(function ConversationLibrary({actions,scope,threads,selected,disabled,ready,hasMore,loading,onMore,onOpen}:Props) {
   const pinned = useSyncExternalStore(subscribe, () => pins.get(scope) ?? emptyPins, () => emptyPins);
   const [search,setSearch] = useState('');
   const query = useDeferredValue(search);
@@ -70,7 +71,7 @@ export const ConversationLibrary = memo(function ConversationLibrary({scope,thre
     pins.set(scope,next);listeners.forEach(listener=>listener());
   }
   return <section className="conversation-library" aria-label="Conversation library">
-    <input ref={searchInput} className="thread-search" type="search" aria-label="Filter conversations" aria-keyshortcuts="Control+Shift+F Meta+Shift+F" title="Search conversations (Ctrl+Shift+F)" placeholder="Search chats…" value={search} onChange={event=>setSearch(event.target.value)} onKeyDown={event=>{if(event.key==='Escape'){setSearch('');}if(event.key==='ArrowDown'){event.preventDefault();viewport.current?.querySelector<HTMLButtonElement>('[data-library-primary]')?.focus();}}}/>
+    <div className="library-search-row"><input ref={searchInput} className="thread-search" type="search" aria-label="Filter conversations" aria-keyshortcuts="Control+Shift+F Meta+Shift+F" title="Search conversations (Ctrl+Shift+F)" placeholder="Search chats…" value={search} onChange={event=>setSearch(event.target.value)} onKeyDown={event=>{if(event.key==='Escape'){setSearch('');}if(event.key==='ArrowDown'){event.preventDefault();viewport.current?.querySelector<HTMLButtonElement>('[data-library-primary]')?.focus();}}}/>{actions}</div>
     <div className="library-filters" aria-label="Filter chats">{['All','Pinned','Recent'].map(name=><button key={name} type="button" aria-pressed={filter===name} onClick={()=>setFilter(name)} title={name==='Recent'?'Updated today or in the previous 7 days':undefined}>{name}</button>)}</div>
     <nav className="thread-list library-viewport" ref={viewport} aria-label="Conversations" aria-busy={loading||search!==query} onScroll={event=>{const node=event.currentTarget;setScroll(node.scrollTop);if(!query&&node.scrollHeight-node.scrollTop-node.clientHeight<100&&hasMore&&!loading)onMore();}} onKeyDown={event=>{
       if(!['ArrowDown','ArrowUp','Home','End'].includes(event.key))return;

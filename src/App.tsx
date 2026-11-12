@@ -344,3 +344,5 @@ export { createDiagnostics, diagnosticsPrompt, isEditorCancellation } from './di
 export { parseEditorSession, serializeEditorSession, editorSessionKey } from './editor/recovery';
 
 export { Startup, readWelcome, completeWelcome, welcomeKey } from './Startup';
+
+export { parseSidebarWidths } from './WorkspaceTools';

@@ -39,7 +39,7 @@ export const invoke:Invoke = async(command,args) => {
 };
 export function message(error:unknown):string {return typeof error==='object' && error!==null && 'message' in error ? String(error.message) : 'Editor operation failed. Your buffer has been retained.';}
 export type Disk = {text:string;revision:string;encoding:string;bom:boolean;bytes:number};
-export type FileTab = {id:string;root:string;path:string;project:string;runtime:'codex'|'opencode';unloaded?:boolean;recoveryUnsaved?:boolean;view?:EditorView;disk:Disk;text:string;preview:boolean;large:boolean;conflict?:Disk;missing?:string;saving?:boolean;managing?:boolean;cursor?:{lineNumber:number;column:number}};
+export type FileTab = {id:string;root:string;path:string;project:string;runtime:'codex'|'opencode';unloaded?:boolean;recoveryUnsaved?:boolean;view?:EditorView;disk:Disk;text:string;preview:boolean;large:boolean;conflict?:Disk;missing?:string;saving?:boolean;saveError?:string;managing?:boolean;cursor?:{lineNumber:number;column:number}};
 export type Options = {theme:string;fontFamily:string;fontSize:number;ligatures:boolean;tabSize:number;insertSpaces:boolean;minimap:boolean;wrap:boolean;preview:boolean};
 export const defaults:Options={theme:'corpstex',fontFamily:'"Cascadia Code", "JetBrains Mono", monospace',fontSize:14,ligatures:false,tabSize:2,insertSpaces:true,minimap:false,wrap:false,preview:false};
 export type ServerConfig={id:string;name:string;language:string;executable:string;args:string[]};
@@ -170,9 +170,9 @@ export async function saveFile(id:string){
   updateFile(id,{saving:true});
   try{
     const disk=await fs<Disk>(file.root,{type:'save',path:file.path,text:file.text,expected:file.disk.revision,encoding:file.disk.encoding,bom:file.disk.bom});
-    updateFile(id,{disk,saving:false,preview:false});notice(`Saved ${file.path}`);
+    updateFile(id,{disk,saving:false,preview:false,saveError:undefined});
     window.dispatchEvent(new CustomEvent('corpstex-editor-saved',{detail:{root:file.root,path:file.path}}));
-  }catch(e){updateFile(id,{saving:false});notice(message(e));if((e as {kind?:string})?.kind==='conflict')await syncFile(id);}
+  }catch(e){updateFile(id,{saving:false,saveError:message(e)});notice(message(e));if((e as {kind?:string})?.kind==='conflict')await syncFile(id);}
 }
 export async function syncFile(id:string){
   const file=snapshot.files.find(f=>f.id===id);if(!file || file.saving||file.managing||file.unloaded)return;

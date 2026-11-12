@@ -4,7 +4,7 @@ import { acceptDisk, acceptMerge, dirty, getEditor, language, loadRecoveredFile,
 
 const views=new Map<string,Monaco.editor.ICodeEditorViewState|null>();
 export function pruneEditorViews(ids:Set<string>){for(const id of views.keys())if(!ids.has(id))views.delete(id);}
-export function EditorSurface({file}:{file:FileTab}){
+export function EditorSurface({file,visible=true}:{file:FileTab;visible?:boolean}){
   if(file.unloaded)return <section className="source-editor" aria-label={`Recovered reference: ${file.path}`}>
     <header className="editor-heading"><strong>{file.path}</strong></header>
     <div className="editor-warning"><p>Restored tab reference only. No file contents or folder permissions were restored.</p>
@@ -14,11 +14,12 @@ export function EditorSurface({file}:{file:FileTab}){
       <button type="button" disabled={file.saving} onClick={()=>void loadRecoveredFile(file.id)}>{file.saving?'Loading…':'Load current saved file'}</button>
     </div>
   </section>;
-  return <LoadedSurface file={file}/>;
+  return <LoadedSurface file={file} visible={visible}/>;
 }
-function LoadedSurface({file}:{file:FileTab}){
+function LoadedSurface({file,visible}:{file:FileTab;visible:boolean}){
   const host=useRef<HTMLDivElement>(null);const editor=useRef<Monaco.editor.IStandaloneCodeEditor|null>(null);
   const {settings}=useEditor();const options=resolveOptions(settings,file.root);const current=useRef(file);current.current=file;
+  const shown=useRef(visible);shown.current=visible;
   const [loading,setLoading]=useState(true);const [failure,setFailure]=useState('');const [position,setPosition]=useState('Ln 1, Col 1');
   useEffect(()=>{
     let disposed=false;let cleanup=()=>{};setFailure('');setLoading(true);
@@ -43,11 +44,12 @@ function LoadedSurface({file}:{file:FileTab}){
       const selection=code.onDidChangeCursorSelection(captureView);const scroll=code.onDidScrollChange(captureView);
       const cursor=code.onDidChangeCursorPosition(event=>{updateFile(file.id,{cursor:event.position});setPosition(`Ln ${event.position.lineNumber}, Col ${event.position.column}`);});
       code.addCommand(monaco.KeyMod.CtrlCmd|monaco.KeyCode.KeyS,()=>void saveFile(file.id));
-      if(document.activeElement?.getAttribute('role')!=='tab')code.focus();setLoading(false);
+      if(shown.current&&document.activeElement?.getAttribute('role')!=='tab'&&!document.querySelector('dialog[open]'))code.focus();setLoading(false);
       cleanup=()=>{views.set(file.id,code.saveViewState());captureView();change.dispose();cursor.dispose();selection.dispose();scroll.dispose();for(const subscription of labelSubscriptions)subscription.dispose();if(diff)diff.dispose();else code.dispose();original?.dispose();editor.current=null;};
     }).catch(e=>{if(!disposed){setFailure(message(e));setLoading(false);}});
     return()=>{disposed=true;cleanup();};
   },[file.id,file.root,file.path,file.conflict?.revision]);
+  useEffect(()=>{if(visible)editor.current?.layout();},[visible]);
   useEffect(()=>{
     const code=editor.current;if(!code)return;
     code.updateOptions({readOnly:Boolean(file.managing),fontSize:options.fontSize,fontFamily:options.fontFamily,fontLigatures:options.ligatures,minimap:{enabled:!file.large&&options.minimap},wordWrap:options.wrap?'on':'off'});
@@ -63,13 +65,14 @@ function LoadedSurface({file}:{file:FileTab}){
   },[file.text]);
   useEffect(()=>{if(file.cursor&&editor.current&&getEditor().active===file.id){const pos=editor.current.getPosition();if(pos?.lineNumber!==file.cursor.lineNumber||pos.column!==file.cursor.column){editor.current.setPosition(file.cursor);editor.current.revealPositionInCenter(file.cursor);}}},[file.cursor]);
   return <section className="source-editor" aria-label={`Editing ${file.path}`}>
-    <header className="editor-heading"><div><span className="editor-eyebrow">SOURCE</span><strong title={file.root+'/'+file.path}>{file.path}</strong></div><button type="button" disabled={!dirty(file)||file.saving||file.managing||Boolean(file.conflict||file.missing)} onClick={()=>void saveFile(file.id)}>{file.saving?'Saving…':'Save · Ctrl+S'}</button></header>
+    <header className="editor-heading"><div><strong title={file.root+'/'+file.path}>{file.path}</strong></div><button type="button" disabled={!dirty(file)||file.saving||file.managing||Boolean(file.conflict||file.missing)} onClick={()=>void saveFile(file.id)}>{file.saving?'Saving…':'Save · Ctrl+S'}</button></header>
+    {file.saveError&&<p className="editor-conflict" role="alert">Save failed: {file.saveError} Your buffer is retained.</p>}
     {file.conflict&&<div className="editor-conflict" role="alert"><strong>Disk changed — your buffer is preserved.</strong><p>Disk version on the left; editable merge result on the right. On narrow screens the diff is inline. Review changes before accepting.</p><button type="button" onClick={()=>acceptDisk(file.id)}>Load disk version</button><button type="button" onClick={()=>acceptMerge(file.id)}>Accept edited merge result</button></div>}
     {file.missing&&<p className="editor-conflict" role="alert">{file.missing} Buffer retained. Restore the file externally to continue saving, or copy its contents into a new file.</p>}
     {file.recoveryUnsaved&&<p className="editor-warning">Previous unsaved edits were not stored and could not be recovered. This is the current saved file.</p>}
     {file.large&&<p className="editor-warning">Large file mode · LSP and minimap disabled · maximum 32 MiB</p>}
     {loading&&<p className="editor-warning" role="status">Loading editor…</p>}
     {failure?<p role="alert">{failure}</p>:<div className="monaco-host" ref={host}/>}
-    <footer className="editor-status"><span>{dirty(file)?'● Unsaved':'Saved'}{file.preview?' · Preview':''}</span><span>{position}</span><span>{file.disk.encoding.toUpperCase()}{file.disk.bom?' + BOM':''} · {file.text.includes('\r\n')?'CRLF':'LF'} · {language(file.path)}</span></footer>
+    <footer className="editor-status"><span role="status">{file.saving?'Saving…':dirty(file)?'● Unsaved':'Saved'}{file.preview?' · Preview':''}</span><span>{position}</span><span>{file.disk.encoding.toUpperCase()}{file.disk.bom?' + BOM':''} · {file.text.includes('\r\n')?'CRLF':'LF'} · {language(file.path)}</span></footer>
   </section>;
 }
