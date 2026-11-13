@@ -1,6 +1,6 @@
 [package]
 name = "corpstex"
-version = "0.1.6"
+version = "0.1.7"
 description = "CorpsTex desktop client shell"
 edition = "2021"
 license = "GPL-3.0-only"
