@@ -144,18 +144,27 @@ export function SessionWorkspace(props:Props) {
   useEffect(()=>{
     if(previous.current===external)return;
     previous.current=external;
-    if(internalActivation.current===external){internalActivation.current=null;return;}
+    const internal=internalActivation.current;internalActivation.current=null;
+    if(internal===external)return;
     const root=props.workspaceRoot;const runtime=props.runtime??'codex';
-    setLayout(old=>{
-      if(old.tabs.some(t=>t.id===old.active&&t.root===root&&t.runtime===runtime))return old;
-      const existing=old.tabs.find(t=>t.root===root&&t.runtime===runtime);
-      if(existing)return focusSession(old,existing.id);
-      if(old.tabs.length>=limit){setNotice('Close a session tab before opening another project.');return old;}
-      const blank=old.tabs.find(t=>!t.root&&!t.threadId);
-      if(blank)return {...old,tabs:old.tabs.map(t=>t.id===blank.id?{...t,root,runtime}:t),active:blank.id};
-      const tab={id:crypto.randomUUID(),root,runtime};
-      return focusSession({...old,tabs:[...old.tabs.filter(t=>t.root||t.threadId),tab]},tab.id);
-    });
+    if(layout.tabs.some(t=>t.id===layout.active&&t.root===root&&t.runtime===runtime))return;
+    const existing=layout.tabs.find(t=>t.root===root&&t.runtime===runtime);
+    let next:SessionLayout;
+    if(existing)next=focusSession(layout,existing.id);
+    else {
+      if(layout.tabs.length>=limit){setNotice('Close a session tab before opening another project.');return;}
+      const blank=layout.tabs.find(t=>!t.root&&!t.threadId);
+      if(blank)next={...layout,tabs:layout.tabs.map(t=>t.id===blank.id?{...t,root,runtime}:t),active:blank.id};
+      else {
+        const tab={id:crypto.randomUUID(),root,runtime};
+        next=focusSession({...layout,tabs:[...layout.tabs.filter(t=>t.root||t.threadId),tab]},tab.id);
+      }
+    }
+    setLayout(next);setEditorSidebar('conversations');
+    if(split)setPanes(old=>assignPane(old,old.focused,next.active));
+    else setActiveFile(null);
+    const threadId=next.tabs.find(t=>t.id===next.active)?.threadId;
+    if(threadId)setOpened(old=>({...old,[next.active]:(old[next.active]??0)+1}));
   },[external]);
   function focusFile(id:string) {
     const file=editor.files.find(file=>file.id===id);if(!file)return;

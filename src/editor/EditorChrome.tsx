@@ -21,7 +21,8 @@ export function EditorChrome(){
     },1500);
     const unload=(event:BeforeUnloadEvent)=>{persistEditorSession();if(getEditor().files.some(f=>dirty(f)||f.conflict)){event.preventDefault();event.returnValue='';}};
     const keys=(event:KeyboardEvent)=>{
-      if(!(event.ctrlKey||event.metaKey)||event.altKey)return;
+      if(event.defaultPrevented||event.isComposing||!(event.ctrlKey||event.metaKey)||event.altKey||event.shiftKey)return;
+      if(!event.composedPath().some(node=>node instanceof Element&&node.matches('.editor-dock:not([hidden])')))return;
       const active=getEditor().active;if(!active)return;
       if(event.key.toLowerCase()==='s'){event.preventDefault();void saveFile(active);}
       if(event.key.toLowerCase()==='w'){event.preventDefault();closeFile(active);}
