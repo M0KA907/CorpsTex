@@ -5,26 +5,26 @@
   color-scheme: dark;
 
   /* Surfaces: warm charcoal */
-  --color-canvas: #262624;
-  --color-surface: #2d2d2a;
-  --color-raised: #363632;
-  --color-overlay: #3a3a36;
-  --color-border: #40403c;
-  --color-border-soft: #35352f;
+  --color-canvas: #20211f;
+  --color-surface: #262724;
+  --color-raised: #30322d;
+  --color-overlay: #393c35;
+  --color-border: #41443c;
+  --color-border-soft: #33362f;
 
   /* Content: soft ivory on charcoal */
   --color-text: #efede5;
   --color-muted: #b8b4a9;
   --color-faint: #98948a;
 
-  /* Accent: terracotta; the ink variant keeps small text readable on raised surfaces */
-  --color-accent: #d97757;
-  --color-accent-ink: #eab188;
-  --color-accent-hover: #e08c6d;
+  /* Accent: warm amber; the ink variant keeps small text readable on raised surfaces */
+  --color-accent: #d5bc92;
+  --color-accent-ink: #e2cba6;
+  --color-accent-hover: #e1c9a4;
   --color-on-accent: #211d19;
 
   /* Status */
-  --color-ok: #9cc08a;
+  --color-ok: #a5ceae;
   --color-status: #e8a45c;
   --color-danger: #d98a7a;
   --color-focus: #e6d9bd;
@@ -37,13 +37,13 @@
   --color-chat-reasoning-surface: #2e3529;
 
   /* Glass surfaces (header, rails, dialogs) */
-  --color-glass-panel: #262624e6;
-  --color-glass-raised: #31312ef7;
+  --color-glass-panel: #20211fe6;
+  --color-glass-raised: #292b26f7;
   --color-glass-border: #efede51a;
   --color-glass-highlight: #ffffff08;
   --color-ambient-warm: #ffffff00;
   --color-ambient-cool: #ffffff06;
-  --shadow-glass: 0 8px 24px #14131130, inset 0 1px 0 #ffffff08;
+  --shadow-glass: inset 0 1px 0 #ffffff05;
   --shadow-popover: 0 16px 48px #14131155, inset 0 1px 0 #ffffff0a;
   --glass-blur: 18px;
   --color-surface-hover: #ffffff0a;
@@ -72,11 +72,16 @@
   --space-8: 2rem;
   --space-12: 3rem;
 
+  /* Semantic interaction tokens follow the selected palette/accent. */
+  --color-selection: color-mix(in srgb, var(--color-chat-reasoning) 14%, var(--color-surface));
+  --color-selection-edge: var(--color-chat-reasoning);
+  --control-height: 2rem;
+
   /* Layout */
   --sidebar-width: 16rem;
   --reading-width: 48rem;
-  --workspace-gutter: 1.25rem;
-  --panel-header-height: 3.25rem;
+  --workspace-gutter: 1rem;
+  --panel-header-height: 2.75rem;
 
   /* Motion: restrained by default; reduced-motion media and [data-motion] collapse these */
   --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);

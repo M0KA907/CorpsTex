@@ -2,6 +2,7 @@ import type { ActivityPreset } from './ActivityBar';
 import { useEffect, useLayoutEffect, useState } from 'react';
 
 export type Preferences = {
+  splitEditor: boolean;
   showApprovalCenter: boolean;
   activityPreset: ActivityPreset;
   activityDisplay: 'bar' | 'compact' | 'hidden';
@@ -15,7 +16,7 @@ export type Preferences = {
   texture: 'on' | 'off';
   surfaces: 'glass' | 'solid';
 };
-export const defaults: Preferences = { showApprovalCenter: true, activityPreset: 'minimal', activityDisplay: 'compact', palette: 'charcoal', accent: 'gold', density: 'comfortable', textSize: 'medium', width: 'focused', motion: 'system', background: 'animated', texture: 'on', surfaces: 'glass' };
+export const defaults: Preferences = { splitEditor: false, showApprovalCenter: true, activityPreset: 'minimal', activityDisplay: 'compact', palette: 'charcoal', accent: 'gold', density: 'comfortable', textSize: 'medium', width: 'focused', motion: 'system', background: 'animated', texture: 'on', surfaces: 'glass' };
 const choices = { activityPreset: ['orbit','pulse','wave','dots','scan','steps','ribbon','beacon','matrix','minimal'], activityDisplay: ['bar','compact','hidden'], palette: ['charcoal','midnight','forest'], accent: ['gold','mint','blue'], density: ['comfortable','compact'], textSize: ['small','medium','large'], width: ['focused','wide'], motion: ['system','reduced'], background: ['animated','static','off'], texture: ['on','off'], surfaces: ['glass','solid'] };
 const storageKey = 'corpstex.appearance.v1';
 export function parsePreferences(raw: string | null): Preferences {
@@ -27,6 +28,7 @@ export function parsePreferences(raw: string | null): Preferences {
     const value = (parsed as Record<string, unknown>)[key];
     if (typeof value === 'string' && choices[key].includes(value)) Object.assign(result, {[key]: value});
   }
+  if (typeof (parsed as Record<string, unknown>).splitEditor === 'boolean') result.splitEditor = (parsed as {splitEditor:boolean}).splitEditor;
   if (typeof (parsed as Record<string, unknown>).showApprovalCenter === 'boolean') result.showApprovalCenter = (parsed as {showApprovalCenter:boolean}).showApprovalCenter;
   return result;
 }

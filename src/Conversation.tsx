@@ -2,7 +2,7 @@ import { WorkspaceIcon } from './WorkspaceIcon';
 import { WorkspaceDrawer } from './WorkspaceDrawer';
 import { ConversationLibrary } from './ConversationLibrary';
 import { useCallback } from 'react';
-import { ActivityBar, activityState } from './ActivityBar';
+import { ActivityBar, ExecutionStrip, activityState } from './ActivityBar';
 import { ComposerInput, referencedSkills, type Skill } from './ComposerInput';
 import './composer-tools.css';
 import { UsageRail, type TokenUsage } from './UsageRail';
@@ -101,7 +101,7 @@ export const ThreadTranscript = memo(function ThreadTranscript({ turns, runtime 
   })}</>;
 });
 
-export function Conversation({ onShowWelcome, sidebarToggle, sidebarHidden=false, runtime = 'codex', runtimeControls, onDraftState, project, controls, connect, onChooseProject, invoke, errorText, settingsOpen, onCloseSettings, preferences, onPreferences, storageError, approvals, approvalBusy, approvalInvoke, exiting, timelineProjects = [], sessionId = '', initialThread, autoOpen = 0, onOpenSession, onSessionState, timelineMode = 'collapsed', onTimelineModeChange, showTimeline = true, visible = true, editorRoot = '' }: { onShowWelcome?:()=>void; sidebarToggle?:ReactNode; sidebarHidden?:boolean; editorRoot?:string; visible?:boolean; sessionId?:string; initialThread?:string; autoOpen?:number; onOpenSession?:(thread?:Thread)=>void; onSessionState?:(thread:Thread|null,pending:boolean)=>void; timelineMode?:TimelineMode; onTimelineModeChange?:(mode:TimelineMode)=>void; showTimeline?:boolean; runtime?: 'codex'|'opencode'; runtimeControls?:ReactNode; onDraftState?:(pending:boolean)=>void; project: Project | null; controls: ReactNode; connect: () => Promise<boolean>; onChooseProject: () => void; invoke: Invoke; errorText: (error: unknown) => string; settingsOpen:boolean; onCloseSettings:()=>void; preferences:Preferences; onPreferences:(next:Preferences)=>void; storageError:string; approvals:Approval[]; approvalBusy:Set<string>; approvalInvoke:Invoke; exiting:boolean; timelineProjects?:TimelineProject[] }) {
+export function Conversation({ keyboardActive=true, onShowWelcome, sidebarToggle, sidebarHidden=false, runtime = 'codex', runtimeControls, onDraftState, project, controls, connect, onChooseProject, invoke, errorText, settingsOpen, onCloseSettings, preferences, onPreferences, storageError, approvals, approvalBusy, approvalInvoke, exiting, timelineProjects = [], sessionId = '', initialThread, autoOpen = 0, onOpenSession, onSessionState, timelineMode = 'collapsed', onTimelineModeChange, showTimeline = true, visible = true, editorRoot = '' }: { keyboardActive?:boolean; onShowWelcome?:()=>void; sidebarToggle?:ReactNode; sidebarHidden?:boolean; editorRoot?:string; visible?:boolean; sessionId?:string; initialThread?:string; autoOpen?:number; onOpenSession?:(thread?:Thread)=>void; onSessionState?:(thread:Thread|null,pending:boolean)=>void; timelineMode?:TimelineMode; onTimelineModeChange?:(mode:TimelineMode)=>void; showTimeline?:boolean; runtime?: 'codex'|'opencode'; runtimeControls?:ReactNode; onDraftState?:(pending:boolean)=>void; project: Project | null; controls: ReactNode; connect: () => Promise<boolean>; onChooseProject: () => void; invoke: Invoke; errorText: (error: unknown) => string; settingsOpen:boolean; onCloseSettings:()=>void; preferences:Preferences; onPreferences:(next:Preferences)=>void; storageError:string; approvals:Approval[]; approvalBusy:Set<string>; approvalInvoke:Invoke; exiting:boolean; timelineProjects?:TimelineProject[] }) {
   const ids = (name:string) => sessionId ? `${sessionId}-${name}` : name;
   const container = useRef<HTMLDivElement>(null);
   const runtimeName=runtime==='opencode'?'OpenCode':'Codex';
@@ -335,20 +335,20 @@ export function Conversation({ onShowWelcome, sidebarToggle, sidebarHidden=false
     finally{interrupting.current=false;}
   }
   useEffect(()=>{
-    if(!visible||settingsOpen||exiting||!ready||busy||!active)return;
+    if(!visible||!keyboardActive||settingsOpen||exiting||!ready||busy||!active)return;
     function stopShortcut(event:KeyboardEvent) {
       if(!['Escape','Esc'].includes(event.key)||event.defaultPrevented||event.repeat||event.isComposing||event.altKey||event.ctrlKey||event.metaKey||event.shiftKey)return;
       // Capture before textarea/WebView handlers consume Escape. Dismissible
       // surfaces retain it, including trusted controls behind closed shadow DOM.
       if(document.querySelector('dialog[open],[data-menu-open],[aria-modal="true"],.project-picker:not([hidden])')||container.current?.querySelector('.composer-picker'))return;
-      if(event.composedPath().some(node=>node instanceof Element&&node.matches('.inline-approvals,[data-approval-controls],.thread-search,[contenteditable="true"]')))return;
+      if(event.composedPath().some(node=>node instanceof Element&&node.matches('.editor-dock,.inline-approvals,[data-approval-controls],.thread-search,[contenteditable="true"]')))return;
       event.preventDefault();
       event.stopPropagation();
       void interrupt();
     }
     window.addEventListener('keydown',stopShortcut,true);
     return ()=>window.removeEventListener('keydown',stopShortcut,true);
-  },[visible,settingsOpen,exiting,ready,busy,active?.id,binding,selected]);
+  },[visible,keyboardActive,settingsOpen,exiting,ready,busy,active?.id,binding,selected]);
   async function older() {
     if (!selected || !historyCursor)return;
     try{const page=await request<Page<Turn>>({type:'history',threadId:selected,cursor:historyCursor});setHistoryCursor(page.nextCursor ?? null);}
@@ -448,6 +448,8 @@ export function Conversation({ onShowWelcome, sidebarToggle, sidebarHidden=false
     </aside>
     <main id={ids('workspace')} className="workspace" data-working={Boolean(active)} data-approval-pending={inlineApprovals.length>0} tabIndex={-1} aria-labelledby={ids('workspace-title')}>
       <div className="workspace-atmosphere" aria-hidden="true"><i className="matrix-red"/><i className="matrix-green"/><i className="matrix-blue"/><span className="graphite-frost"/></div>
+      {preferences.activityDisplay!=='hidden'&&<ExecutionStrip turn={turns.at(-1)} onDetails={onTimelineModeChange?()=>onTimelineModeChange('expanded'):undefined}/>}
+      <div className="workspace-columns"><div className="conversation-column">
       <div className="workspace-heading"><h1 id={ids('workspace-title')}>{thread?.name || thread?.preview?.slice(0,60) || 'Conversation'}</h1>{runtime==='codex'&&thread&&<ThreadControls key={`${binding}:${thread.id}`} threadId={thread.id} name={thread.name} archived={thread.clientArchived} disabled={!ready||busy||Boolean(active)||exiting} archiveBlocked={Boolean(project?.activeTurns||project?.pendingRequests||project?.uncertain)} onAction={threadAction}/>}{(!ready||thread?.clientArchived||preferences.activityDisplay==='hidden')&&<span className="eyebrow">{!ready?'Disconnected':thread?.clientArchived?'Archived':activity.label}</span>}</div>
       {(thread?.parentThreadId||thread?.forkedFromId)&&<p className="panel-note">{thread.parentThreadId?`Parent agent: ${thread.parentThreadId}`:`Forked from: ${thread.forkedFromId}`}{thread.agentNickname?` · ${thread.agentNickname}`:''}{thread.agentRole?` · ${thread.agentRole}`:''}</p>}
       {runtime==='opencode' ? <aside className="usage-rail" aria-label="OpenCode usage">Usage and pricing are not reported by ACP. “Free” identifies catalog labels.</aside> : <UsageRail project={project} threadId={selected} tokenUsage={thread?.tokenUsage} turnState={`${turns.at(-1)?.id}:${turns.at(-1)?.status}`} invoke={invoke}/>}
@@ -460,6 +462,7 @@ export function Conversation({ onShowWelcome, sidebarToggle, sidebarHidden=false
         <div ref={messageEnd}/>
       </div></div>}
       {preferences.activityDisplay!=='hidden' && selected && ready && activity.label!=='Ready' && <ActivityBar preset={preferences.activityPreset} label={activity.label} active={activity.active} compact={preferences.activityDisplay==='compact'}/>}
+      </div></div>
       <div className="composer-placeholder">
         {error && <p role="alert">{error}</p>}
         {thread?.clientRuntimeNotice&&<p role="status">Latest runtime notice · {thread.clientRuntimeNotice.kind}{thread.clientRuntimeNotice.willRetry?' · retrying':''}: {thread.clientRuntimeNotice.message}</p>}

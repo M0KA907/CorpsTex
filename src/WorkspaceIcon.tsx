@@ -1,4 +1,7 @@
 const paths={
+  paneLeft:'M3 4h18v16H3ZM9 4v16M6 8v8',
+  paneRight:'M3 4h18v16H3ZM15 4v16M18 8v8',
+  swap:'m7 3-4 4 4 4M3 7h17M17 21l4-4-4-4M21 17H4',
   chat:'M4 4h16v12H9l-5 4V4Z',
   file:'M6 3h8l4 4v14H6V3Zm8 0v5h4',
   folder:'M3 6h7l2 2h9v12H3V6Z',

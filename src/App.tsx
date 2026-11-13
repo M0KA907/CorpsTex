@@ -119,6 +119,7 @@ export function ShutdownDialog({ projects, onCancel, onConfirm }: { projects: Pr
 }
 
 export default function App() {
+  const [workspaceToolbar,setWorkspaceToolbar]=useState<HTMLDivElement|null>(null);
   useEffect(()=>{
     const failure=()=>diagnostics.failure('frontend',undefined,{kind:'frontendError'});
     const report=(event:PromiseRejectionEvent)=>{if(isEditorCancellation(event.reason)){event.preventDefault();return;}failure();};
@@ -270,20 +271,23 @@ export default function App() {
       <div className="startup-workspace" inert={showStartup}>
       <a className="skip-link" href="#workspace" onClick={event=>{event.preventDefault();document.querySelector<HTMLElement>('.session-focused .workspace')?.focus();}}>Skip to workspace</a>
       <header className="app-header">
-        <AppZoom/>
+        <div className="header-leading"><AppZoom/>
         <button className="sidebar-toggle" type="button" aria-expanded={sidebarOpen} aria-label={sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'} title="Toggle sidebar (Ctrl+B)" onClick={()=>setSidebarOpen(open=>!open)}><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M9.5 4v16"/></svg></button>
         <div className="identity">
           <span className="wordmark">CorpsTex</span>
         </div>
         <div className="header-context" title={activeRoot || 'No project selected'}><strong>{activeRoot.split(/[\\/]/).filter(Boolean).at(-1)||'Choose project'}</strong><span>{runtimeName}</span></div>
         <Diagnostics suppressed={view.exitRequested||view.approvals.length>0||settingsOpen||browserOpen}/>
+        </div>
+        <div className="workspace-toolbar-slot" ref={setWorkspaceToolbar} hidden={!preferences.splitEditor}/>
+        <div className="header-trailing">
         <button className="settings-launcher" type="button" onClick={()=>setSettingsOpen(true)} aria-haspopup="dialog" aria-expanded={settingsOpen} aria-label="Personal settings" title="Personal settings"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="m9 3-1 3-3 1-2 5 2 5 3 1 1 3h6l1-3 3-1 2-5-2-5-3-1-1-3Z"/><circle cx="12" cy="12" r="3.5"/></svg></button>
         {(pollFailure||!connected)&&<p className="connection" role="status">
           {pollFailure ? `${runtimeName} status unavailable` : starting ? `${runtimeName} connecting` : `${runtimeName} disconnected`}
-        </p>}
+        </p>}</div>
       </header>
 
-      <SessionWorkspace onShowWelcome={()=>{setSettingsOpen(false);welcome.show();}} workspaceRoot={selectedRoot || activeProject?.root || ''} workspaceProjects={view.projects} onActivate={(next,path)=>{setRuntime(next);setSelectedRoot(path);setRoot(path);}} timelineProjects={view.projects} runtime={runtime} onChooseProject={()=>setBrowserOpen(true)} settingsOpen={settingsOpen && !view.exitRequested} onCloseSettings={()=>setSettingsOpen(false)} preferences={preferences} onPreferences={onPreferences} storageError={storageError} approvals={view.approvals} approvalBusy={approvalBusy} approvalInvoke={approvalInvoke} exiting={view.exitRequested} project={activeProject} connect={() => connect()} invoke={invoke} errorText={errorText} runtimeControls={<RuntimePicker value={runtime} disabled={connecting||view.exitRequested} counts={{codex:view.projects.filter(p=>(p.runtime??'codex')==='codex'&&p.status==='ready').length,opencode:view.projects.filter(p=>p.runtime==='opencode'&&p.status==='ready').length}} onChange={next=>void chooseRuntime(next)}/>} controls={<><button className="choose-project" type="button" aria-expanded={projectPickerOpen} aria-controls="project-picker" title={activeRoot || 'Choose project folder'} disabled={connecting||starting} onClick={()=>setProjectPickerOpen(open=>!open)}><span>Project</span><strong>{activeRoot.split(/[\\/]/).filter(Boolean).at(-1)||'Choose folder'}</strong><span aria-hidden="true">⌄</span></button>
+      <SessionWorkspace workspaceToolbar={workspaceToolbar} onShowWelcome={()=>{setSettingsOpen(false);welcome.show();}} workspaceRoot={selectedRoot || activeProject?.root || ''} workspaceProjects={view.projects} onActivate={(next,path)=>{setRuntime(next);setSelectedRoot(path);setRoot(path);}} timelineProjects={view.projects} runtime={runtime} onChooseProject={()=>setBrowserOpen(true)} settingsOpen={settingsOpen && !view.exitRequested} onCloseSettings={()=>setSettingsOpen(false)} preferences={preferences} onPreferences={onPreferences} storageError={storageError} approvals={view.approvals} approvalBusy={approvalBusy} approvalInvoke={approvalInvoke} exiting={view.exitRequested} project={activeProject} connect={() => connect()} invoke={invoke} errorText={errorText} runtimeControls={<RuntimePicker value={runtime} disabled={connecting||view.exitRequested} counts={{codex:view.projects.filter(p=>(p.runtime??'codex')==='codex'&&p.status==='ready').length,opencode:view.projects.filter(p=>p.runtime==='opencode'&&p.status==='ready').length}} onChange={next=>void chooseRuntime(next)}/>} controls={<><button className="choose-project" type="button" aria-expanded={projectPickerOpen} aria-controls="project-picker" title={activeRoot || 'Choose project folder'} disabled={connecting||starting} onClick={()=>setProjectPickerOpen(open=>!open)}><span>Project</span><strong>{activeRoot.split(/[\\/]/).filter(Boolean).at(-1)||'Choose folder'}</strong><span aria-hidden="true">⌄</span></button>
         <div id="project-picker" className="project-picker" hidden={!projectPickerOpen} onKeyDown={event=>{if(event.key==='Escape'){setProjectPickerOpen(false);event.currentTarget.previousElementSibling instanceof HTMLElement && event.currentTarget.previousElementSibling.focus();}}}>
           <input type="search" aria-label="Find a project" placeholder="Find a project…" value={projectSearch} onChange={event=>setProjectSearch(event.target.value)}/>
           <nav aria-label="Projects">{view.projects.filter(project=>`${project.root} ${project.runtime??'codex'}`.toLowerCase().includes(projectSearch.toLowerCase())).map(project=><button type="button" key={`${project.runtime}:${project.root}`} aria-current={activeProject?.root===project.root&&(project.runtime??'codex')===runtime?'page':undefined} onClick={()=>{setRuntime(project.runtime??'codex');setSelectedRoot(project.root);setRoot(project.root);try { localStorage.setItem('corpstex.lastProject',project.root); } catch {} setProjectPickerOpen(false);setProjectSearch('');}}><strong>{project.root.split(/[\\/]/).filter(Boolean).at(-1)||project.root}</strong><small>{project.root}</small><span>{project.runtime??'codex'}{project.status==='ready'?'':project.status==='starting'?' · Connecting…':project.status==='failed'?' · Connection lost':' · Stopped'}</span></button>)}</nav>
@@ -325,7 +329,7 @@ export { matchingApprovals } from './Approvals';
 
 export { formatFileSize } from './FolderBrowser';
 
-export { ActivityBar, activityState, activityPresets } from './ActivityBar';
+export { ActivityBar, ExecutionStrip, activityState, activityPresets } from './ActivityBar';
 
 export { composerToken, referencedSkills, composerCommands } from './ComposerInput';
 export { quotaWindows, resetLabel, threadCost, weeklyWindow } from './UsageRail';
@@ -351,3 +355,5 @@ export { parseEditorSession, serializeEditorSession, editorSessionKey } from './
 export { Startup, readWelcome, completeWelcome, welcomeKey } from './Startup';
 
 export { parseSidebarWidths } from './WorkspaceTools';
+
+export { parsePaneLayout, assignPane } from './WorkspacePanes';

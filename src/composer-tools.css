@@ -20,6 +20,17 @@
 .skill-attachments { display:flex; flex-wrap:wrap; gap:0.375rem; margin-bottom:0.375rem; }
 .skill-attachments button { padding:0.125rem 0.5rem; font-size:var(--text-xs); color:var(--color-accent-ink); border-radius:1rem; background:var(--color-raised); border-color:var(--color-border-soft); }
 /* Ten selectable, purely decorative ways to render the same reported state. */
+.execution-strip { display:flex; align-items:center; flex:none; gap:.75rem; margin:.4rem var(--workspace-gutter) 0; padding:.3rem .65rem; min-height:2.25rem; border:1px solid var(--color-border-soft); border-radius:var(--radius-md); background:var(--color-surface); font-size:var(--text-xs); }
+.execution-caption { flex:none; font-weight:550; }
+.execution-strip ol { display:flex; align-items:center; flex:1; gap:1rem; list-style:none; padding:0; margin:0; overflow:auto; min-width:0; }
+.execution-strip li { display:flex; align-items:center; gap:.4rem; flex:none; color:var(--color-muted); }
+.execution-strip li small { font:inherit; color:var(--color-muted); }
+.execution-mark { color:var(--color-faint); }
+.execution-strip [data-status=completed] .execution-mark { color:var(--color-ok); }
+.execution-strip :is([data-status=inProgress],[data-status=running],[data-status=pending]) .execution-mark { color:var(--color-status); }
+.execution-strip :is([data-status=failed],[data-status=declined]) .execution-mark { color:var(--color-danger); }
+.execution-strip button { flex:none; min-height:1.75rem; border-color:var(--color-border); background:transparent; font:inherit; }
+@media(max-width:759px) { .execution-caption,.execution-strip li small { display:none; } .execution-strip { gap:.4rem; } }
 .activity-bar { display:flex; align-items:center; gap:0.75rem; flex-shrink:0; width:calc(100% - 2 * var(--workspace-gutter)); max-width:var(--reading-width); min-height:2rem; margin:0 auto 0.375rem; color:var(--color-accent); font-size:var(--text-xs); }
 .activity-label { color:var(--color-text); }
 .activity-caption { margin-left:auto; font:0.625rem var(--font-mono); color:var(--color-muted); letter-spacing:0.1em; }

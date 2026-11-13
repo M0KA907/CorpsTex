@@ -4,8 +4,6 @@
 .session-workspace[data-sidebar-view=files] .session-panel>.session-content>.projects { display:none; }
 .session-workspace .file-explorer { grid-area:sidebar; display:flex; flex-direction:column; gap:.6rem; min-width:0; min-height:0; overflow:auto; }
 .session-workspace .file-explorer[hidden] { display:none; }
-.session-workspace[data-file-active=true] .session-focused>.session-content>.workspace,
-.session-workspace[data-file-active=true] .session-focused>.session-content>.timeline { display:none; }
 .source-panel { grid-area:primary; display:flex; flex-direction:column; min-width:0; min-height:0; background:var(--color-canvas); overflow:hidden; }
 .source-editor { display:flex; flex-direction:column; flex:1; min-height:0; min-width:0; }
 .editor-heading { display:flex; align-items:center; justify-content:space-between; gap:1rem; padding:.75rem 1rem; border-bottom:1px solid var(--color-border-soft); }

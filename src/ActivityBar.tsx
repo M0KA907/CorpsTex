@@ -26,3 +26,18 @@ export function ActivityBar({preset,label,active,compact=false,preview=false}:{p
     <span className="activity-label">{label}</span>
   </div>;
 }
+
+const operationNames:Record<string,string>={reasoning:'Reasoning',plan:'Plan',commandExecution:'Command',fileChange:'File changes',mcpToolCall:'MCP tool',webSearch:'Web search',collabAgentToolCall:'Agent',dynamicToolCall:'Tool',imageGeneration:'Image'};
+const operationStates:Record<string,string>={pending:'Pending',inProgress:'Running',running:'Running',completed:'Completed',failed:'Failed',interrupted:'Interrupted',declined:'Declined'};
+export function ExecutionStrip({turn,onDetails}:{turn?:ActivityTurn;onDetails?:()=>void}) {
+  const operations=turn?.items.filter(item=>operationNames[item.type]).slice(-5)??[];
+  if(!operations.length)return null;
+  return <section className="execution-strip" aria-label="Latest turn execution">
+    <span className="execution-caption">Execution</span>
+    <ol>{operations.map((item,index)=>{
+      const status=item.clientActivityStatus??item.status??'unreported';
+      return <li key={index} data-status={status}><span className="execution-mark" aria-hidden="true">{status==='completed'?'✓':status==='failed'?'!':status==='interrupted'?'−':'○'}</span><span>{operationNames[item.type]}</span><small>{status==='unreported'?'Not reported':operationStates[status]??status}</small></li>;
+    })}</ol>
+    {onDetails&&<button type="button" onClick={onDetails}>View timeline <span aria-hidden="true">↗</span></button>}
+  </section>;
+}
