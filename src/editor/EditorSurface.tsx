@@ -1,10 +1,11 @@
 import { memo, useEffect, useRef, useState } from 'react';
 import type * as Monaco from 'monaco-editor/editor/editor.api';
-import { acceptDisk, acceptMerge, dirty, getEditor, language, loadRecoveredFile, message, notice, resolveOptions, saveFile, updateFile, useEditorSettings, type FileTab } from './state';
+import { acceptDisk, acceptMerge, dirty, getEditor, language, loadRecoveredFile, message, notice, resolveOptions, saveFile, updateFile, useEditorSettings, useEditorFile, type FileTab } from './state';
 
 const views=new Map<string,Monaco.editor.ICodeEditorViewState|null>();
 export function pruneEditorViews(ids:Set<string>){for(const id of views.keys())if(!ids.has(id))views.delete(id);}
-export const EditorSurface=memo(function EditorSurface({file,visible=true}:{file:FileTab;visible?:boolean}){
+export const EditorSurface=memo(function EditorSurface({fileId,visible=true}:{fileId:string;visible?:boolean}){
+  const file=useEditorFile(fileId);if(!file)return null;
   if(file.unloaded)return <section className="source-editor" aria-label={`Recovered reference: ${file.path}`}>
     <header className="editor-heading"><strong title={`${file.runtime} · ${file.project} · ${file.root}`}>{file.path}</strong></header>
     <div className="editor-warning">
@@ -25,10 +26,11 @@ function LoadedSurface({file,visible}:{file:FileTab;visible:boolean}){
     void import('./monaco').then(({monaco,modelFor})=>{
       if(disposed||!host.current)return;
       const options=resolveOptions(getEditor().settings,current.current.root);
-      for(const [name,data] of Object.entries(getEditor().settings.themes))try{monaco.editor.defineTheme(name,data as Monaco.editor.IStandaloneThemeData);}catch{notice(`Theme ${name} is invalid.`);}
+      if(shown.current)for(const [name,data] of Object.entries(getEditor().settings.themes))try{monaco.editor.defineTheme(name,data as Monaco.editor.IStandaloneThemeData);}catch{notice(`Theme ${name} is invalid.`);}
+      if(shown.current)monaco.editor.setTheme(options.theme);
       const model=modelFor(current.current);if(model.getValue()!==current.current.text)model.setValue(current.current.text);
       let diff:Monaco.editor.IStandaloneDiffEditor|undefined;let original:Monaco.editor.ITextModel|undefined;let labelSubscriptions:Monaco.IDisposable[]=[];
-      const config={readOnly:Boolean(current.current.managing),automaticLayout:true,theme:options.theme,fontSize:options.fontSize,fontFamily:options.fontFamily,fontLigatures:options.ligatures,minimap:{enabled:!file.large&&options.minimap},wordWrap:options.wrap?'on' as const:'off' as const,scrollBeyondLastLine:false,accessibilitySupport:'auto' as const,ariaLabel:`Source editor: ${file.path}`,renderWhitespace:'selection' as const,largeFileOptimizations:true};
+      const config={readOnly:Boolean(current.current.managing),automaticLayout:true,fontSize:options.fontSize,fontFamily:options.fontFamily,fontLigatures:options.ligatures,minimap:{enabled:!file.large&&options.minimap},wordWrap:options.wrap?'on' as const:'off' as const,scrollBeyondLastLine:false,accessibilitySupport:'auto' as const,ariaLabel:`Source editor: ${file.path}`,renderWhitespace:'selection' as const,largeFileOptimizations:true};
       if(file.conflict){
         original=monaco.editor.createModel(file.conflict.text,language(file.path));diff=monaco.editor.createDiffEditor(host.current,{...config,originalAriaLabel:`Disk version: ${file.path}`,modifiedAriaLabel:`Source editor: ${file.path}`,originalEditable:false,renderSideBySide:window.innerWidth>=900,maxComputationTime:3000});diff.setModel({original,modified:model});editor.current=diff.getModifiedEditor();
         // Repair labels after Monaco finishes resetting a diff sub-editor's options.
@@ -58,10 +60,11 @@ function LoadedSurface({file,visible}:{file:FileTab;visible:boolean}){
     code.getModel()?.updateOptions({tabSize:options.tabSize,insertSpaces:options.insertSpaces});
     void import('./monaco').then(({monaco,refreshModelLanguage})=>{
       if(editor.current!==code)return;const model=code.getModel();if(model)refreshModelLanguage(model,file.path);
+      if(!shown.current)return;
       for(const [name,data] of Object.entries(settings.themes))try{monaco.editor.defineTheme(name,data as Monaco.editor.IStandaloneThemeData);}catch{notice(`Theme ${name} is invalid.`);}
       monaco.editor.setTheme(options.theme);
     });
-  },[JSON.stringify(options),settings.themes,settings.languageMappings,file.id,file.managing,file.large]);
+  },[JSON.stringify(options),settings.themes,settings.languageMappings,file.id,file.managing,file.large,visible,loading]);
   useEffect(()=>{
     const model=editor.current?.getModel();if(model&&model.getValue()!==file.text){const saved=editor.current?.saveViewState();model.setValue(file.text);editor.current?.restoreViewState(saved??null);}
   },[file.text]);

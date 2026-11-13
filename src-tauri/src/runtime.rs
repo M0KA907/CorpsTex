@@ -172,6 +172,12 @@ impl Process {
         cwd: Option<&Path>,
     ) -> Result<Self, Error> {
         let mut command = Command::new(executable);
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::unix::process::CommandExt;
+            // Own a separate group; never signal the application's group.
+            command.process_group(0);
+        }
         if let Some(cwd) = cwd {
             command.current_dir(cwd);
         }
@@ -251,7 +257,7 @@ impl Process {
                 // A partial write has an unknown outcome. Stop this connection and
                 // never retry it; killing the child also unblocks its stdin writer.
                 self.writer.take();
-                let _ = self.child.kill();
+                self.terminate_workload();
                 Err(Error::Transport)
             }
         }
@@ -349,13 +355,43 @@ impl Drop for Process {
                 }
             }
         }
+        // The parent may have exited while descendants still hold our pipes.
+        self.terminate_workload();
         let _ = self.child.wait();
+        // Release backpressure before waiting for the protocol reader to finish.
+        let (_, empty) = mpsc::sync_channel(1);
+        drop(std::mem::replace(&mut self.messages, empty));
+        let deadline = Instant::now() + Duration::from_millis(200);
+        while self.workers.iter().any(|w| !w.is_finished()) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
         // A descendant may inherit the pipes. Never block application exit joining it.
         for worker in self.workers.drain(..) {
             if worker.is_finished() {
                 let _ = worker.join();
             }
         }
+    }
+}
+
+impl Process {
+    fn terminate_workload(&mut self) {
+        #[cfg(target_os = "linux")]
+        {
+            unsafe extern "C" {
+                fn kill(pid: i32, signal: i32) -> i32;
+            }
+            // spawn_at creates this group. Descendants that deliberately leave it
+            // are outside this mechanism; this is not cgroup containment.
+            if let Ok(group) = i32::try_from(self.child.id()) {
+                if group > 1 {
+                    unsafe {
+                        kill(-group, 9);
+                    }
+                }
+            }
+        }
+        let _ = self.child.kill();
     }
 }
 
@@ -792,6 +828,52 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&marker).unwrap(), "done");
         std::fs::remove_file(marker).unwrap();
         std::fs::remove_dir(directory).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn process_drop_stops_descendants_even_after_parent_exit() {
+        for parent_exits in [false, true] {
+            let script = if parent_exits {
+                "sleep 30 & printf '%s\\n' \"$!\"; exit 0"
+            } else {
+                "sleep 30 & printf '%s\\n' \"$!\"; while :; do read -r line || sleep 1; done"
+            };
+            let mut process = fixture(script);
+            let pid = process
+                .receive(Instant::now() + TIMEOUT, &AtomicBool::new(false))
+                .unwrap()
+                .trim()
+                .parse::<u32>()
+                .unwrap();
+            let workers = std::mem::take(&mut process.workers);
+            if parent_exits {
+                process.child.wait().unwrap();
+            }
+            let started = Instant::now();
+            drop(process);
+            assert!(started.elapsed() < Duration::from_secs(3));
+            let deadline = Instant::now() + Duration::from_secs(1);
+            loop {
+                // An orphan zombie has stopped executing and holds no pipes;
+                // reaping it belongs to the host's init, not this client.
+                let live = fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|stat| {
+                    stat.split_once(") ")
+                        .is_some_and(|(_, rest)| !rest.starts_with('Z'))
+                });
+                if !live && workers.iter().all(|w| w.is_finished()) {
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "owned workload or worker survived"
+                );
+                thread::sleep(Duration::from_millis(10));
+            }
+            for worker in workers {
+                worker.join().unwrap();
+            }
+        }
     }
 
     #[cfg(target_os = "linux")]

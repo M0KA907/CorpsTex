@@ -47,14 +47,18 @@ export class LspNotificationQueue {
     return new Promise<void>((resolve,reject)=>this.waiters.add({resolve,reject}));
   }
 
-  private fail(error:Error){
+  dispose(){
+    this.fail(new Error('Language-server context ended.'),false);
+  }
+
+  private fail(error:Error,report=true){
     if(this.failure)return;
     this.failure=error;
     this.pending=[];
     this.bytes=0;
     for(const waiter of this.waiters)waiter.reject(error);
     this.waiters.clear();
-    this.onFailure(error);
+    if(report)this.onFailure(error);
   }
 
   private async drain(){

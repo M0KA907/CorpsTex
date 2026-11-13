@@ -6,6 +6,9 @@ const rawInvoke:Invoke = (command,args) => {
   const bridge=typeof window==='undefined'?undefined:(window as Window & {__TAURI__?:{core:{invoke:Invoke}}}).__TAURI__?.core.invoke;
   return bridge ? bridge(command,args) : Promise.reject({message:'File editing requires the CorpsTex desktop bridge.'});
 };
+const contextListeners=new Set<()=>void>();
+export function onEditorContextChange(callback:()=>void){contextListeners.add(callback);return()=>{contextListeners.delete(callback);};}
+function invalidateEditorContext(){for(const listener of contextListeners)listener();}
 let contextKey='';
 let contextOwner={project:'',runtime:'codex' as 'codex'|'opencode'};
 let context:Promise<number>|null=null;
@@ -17,6 +20,7 @@ export function setEditorContext(project:string,runtime:string):Promise<number>{
   contextOwner={project,runtime:runtime as 'codex'|'opencode'};
   const next=contextQueue.catch(()=>{}).then(()=>rawInvoke<number>('editor_context',{project,runtime}));
   context=next;contextQueue=next;
+  invalidateEditorContext();
   void next.catch(()=>{if(context===next){context=null;contextKey='';}});
   return next;
 }
@@ -112,6 +116,20 @@ function emit(next:Partial<Snapshot>){
 }
 function subscribe(callback:()=>void){listeners.add(callback);return()=>{listeners.delete(callback);};}
 export function useEditor(){return useSyncExternalStore(subscribe,()=>snapshot,()=>serverSnapshot);}
+// Navigation observes only tab metadata. Text and view updates belong to the
+// individual editor surface; they must not redraw retained conversations.
+type NavigationFile=Pick<FileTab,'id'|'root'|'path'|'project'|'runtime'|'preview'|'saving'|'managing'> & {unsaved:boolean;conflicted:boolean};
+let navigationSource:Snapshot|undefined;
+let navigation:{files:NavigationFile[];active:string|null;sidebar:Snapshot['sidebar']}|undefined;
+function editorNavigation(){
+  if(navigationSource===snapshot)return navigation!;
+  navigationSource=snapshot;
+  const files=snapshot.files.map(f=>({id:f.id,root:f.root,path:f.path,project:f.project,runtime:f.runtime,preview:f.preview,saving:f.saving,managing:f.managing,unsaved:dirty(f),conflicted:Boolean(f.conflict)}));
+  if(!navigation||navigation.active!==snapshot.active||navigation.sidebar!==snapshot.sidebar||JSON.stringify(navigation.files)!==JSON.stringify(files))navigation={files,active:snapshot.active,sidebar:snapshot.sidebar};
+  return navigation;
+}
+export function useEditorNavigation(){return useSyncExternalStore(subscribe,editorNavigation,editorNavigation);}
+export function useEditorFile(id:string){return useSyncExternalStore(subscribe,()=>snapshot.files.find(f=>f.id===id),()=>serverSnapshot.files.find(f=>f.id===id));}
 export function useEditorSettings(){return useSyncExternalStore(subscribe,()=>snapshot.settings,()=>serverSnapshot.settings);}
 export const getEditor=()=>snapshot;
 export const dirty=(f:FileTab)=>f.text!==f.disk.text;
@@ -124,6 +142,7 @@ export async function revokeEditorAccess(){
   if(!selected)return;
   const next=selected.then(scope=>rawInvoke<number>('editor_revoke',{scope}));
   context=next;contextQueue=next;
+  invalidateEditorContext();
   try{await next;}catch(e){if(context===next){context=null;contextKey='';}throw e;}
 }
 const syncing=new Map<string,symbol>();

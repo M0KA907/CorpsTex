@@ -3,7 +3,7 @@ import { uiScale } from '../AppZoom';
 import { WorkspaceDrawer } from '../WorkspaceDrawer';
 import { FolderBrowser } from '../FolderBrowser';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { authorize, dirty, fs, grantEditorAccess, manageFiles, message, notice, openFile, invoke, revokeEditorAccess, setEditorContext, useEditor } from './state';
+import { authorize, fs, grantEditorAccess, manageFiles, message, notice, openFile, invoke, revokeEditorAccess, setEditorContext, useEditorNavigation } from './state';
 type Entry={name:string;path:string;directory:boolean;symlink:boolean};
 type Listing={entries:Entry[];truncated:boolean};
 const locations=new Map<string,string>();
@@ -16,7 +16,7 @@ export function FileExplorer({root:projectRoot,runtime,hidden,onProject,onNewCon
   const [extra,setExtra]=useState('');const [grantedRoot,setGrantedRoot]=useState('');
   const root=extra||grantedRoot||projectRoot;
   useEffect(()=>{setExtra('');setGrantedRoot('');setRoots([]);setAccessOpen(false);setAction(null);setPicker(null);},[projectRoot,runtime]);
-  const {files,active}=useEditor();const [directory,setDirectory]=useState('');const [listing,setListing]=useState<Listing>({entries:[],truncated:false});
+  const {files,active}=useEditorNavigation();const [directory,setDirectory]=useState('');const [listing,setListing]=useState<Listing>({entries:[],truncated:false});
   const [filter,setFilter]=useState('');const [selected,setSelected]=useState<Entry|null>(null);const [destination,setDestination]=useState('');const [busy,setBusy]=useState(false);const [error,setError]=useState('');
   const binding=useRef('');binding.current=JSON.stringify([projectRoot,runtime,root,directory]);const refreshBusy=useRef(false);
   useEffect(()=>{setDirectory(locations.get(root)??'');setSelected(null);setAction(null);setListing({entries:[],truncated:false});setError('');},[root,projectRoot,runtime]);
@@ -74,7 +74,7 @@ export function FileExplorer({root:projectRoot,runtime,hidden,onProject,onNewCon
       <nav className="explorer-list" aria-label="Project directory contents">{listing.entries.filter(e=>e.name.toLowerCase().includes(filter.toLowerCase())).map(entry=>{
         const protectedEntry=entry.symlink||entry.name==='.git'||entry.name.startsWith('.corpstex-save-');
         return <div className="explorer-entry" key={entry.path} data-selected={action?selected?.path===entry.path:activeFile?.root===root&&activeFile.path===entry.path} onContextMenu={event=>{if(protectedEntry)return;event.preventDefault();entryMenu(entry,event.currentTarget);}}>
-          <button type="button" disabled={protectedEntry} title={entry.symlink?'Symlinks are protected':entry.path} onClick={()=>{setSelected(entry);setDestination(entry.path);if(entry.directory)navigate(entry.path);else void openFile(root,entry.path);}} onDoubleClick={()=>{if(!entry.directory)void openFile(root,entry.path,true);}}><WorkspaceIcon name={entry.directory?'folder':'file'}/><span>{entry.name}</span>{files.some(f=>f.root===root&&f.path===entry.path&&dirty(f))&&<span aria-label="Unsaved">●</span>}</button>
+          <button type="button" disabled={protectedEntry} title={entry.symlink?'Symlinks are protected':entry.path} onClick={()=>{setSelected(entry);setDestination(entry.path);if(entry.directory)navigate(entry.path);else void openFile(root,entry.path);}} onDoubleClick={()=>{if(!entry.directory)void openFile(root,entry.path,true);}}><WorkspaceIcon name={entry.directory?'folder':'file'}/><span>{entry.name}</span>{files.some(f=>f.root===root&&f.path===entry.path&&f.unsaved)&&<span aria-label="Unsaved">●</span>}</button>
           {!protectedEntry&&<button type="button" className="explorer-select" aria-label={`Manage ${entry.directory?'folder':'file'} ${entry.name}`} title={`Actions for ${entry.name}`} aria-haspopup="dialog" onClick={event=>entryMenu(entry,event.currentTarget)}>⋯</button>}
         </div>;
       })}</nav>
